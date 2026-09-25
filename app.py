@@ -5,6 +5,7 @@ import socket
 import ssl
 from email.message import EmailMessage
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlparse
 
 import streamlit as st
@@ -224,6 +225,23 @@ def send_email(to_address, subject, body):
         raise EmailStageError(stage, exc) from exc
 
 
+def viewer_timezone():
+    try:
+        return ZoneInfo(st.context.timezone)
+    except (AttributeError, TypeError, ValueError, ZoneInfoNotFoundError):
+        offset = getattr(st.context, "timezone_offset", None)
+        if offset is not None:
+            return timezone(-timedelta(minutes=offset))
+        return timezone.utc
+
+
+def display_meeting_time(value, tz):
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(tz).strftime("%d %b %Y, %H:%M %Z (UTC%z)")
+
+
 def send_booking_email(db, recipient_name, start, end):
     user = db.auth.get_user().user
     if not user or not user.email:
@@ -232,8 +250,8 @@ def send_booking_email(db, recipient_name, start, end):
         user.email,
         "Your matchmaking meeting request",
         f"Your meeting request for {recipient_name} has been submitted.\n\n"
-        f"Proposed time (UTC): {start.strftime('%Y-%m-%d %H:%M')}–"
-        f"{end.strftime('%H:%M')}\n\n"
+        f"Proposed time: {display_meeting_time(start.isoformat(), viewer_timezone())}–"
+        f"{end.astimezone(viewer_timezone()).strftime('%H:%M')}\n\n"
         "The recipient still needs to accept it. You can check its status in My meetings.",
     )
 
@@ -271,19 +289,24 @@ def smtp_issue(exc):
 def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None):
     if recipient_id == uid:
         return
+    local_tz = viewer_timezone()
     with st.form(f"request_{key}"):
-        st.caption("Propose a meeting time in UTC. The recipient will accept or decline.")
-        day = st.date_input("Date (UTC)", key=f"day_{key}")
-        clock = st.time_input("Start time (UTC)", key=f"time_{key}")
+        st.caption(f"Times are shown in your browser time zone: {local_tz}. The recipient will accept or decline.")
+        day = st.date_input("Date (your time zone)", key=f"day_{key}")
+        clock = st.time_input("Start time (your time zone)", key=f"time_{key}")
         duration = st.selectbox("Duration in minutes", [15, 30, 45, 60], index=1, key=f"duration_{key}")
         purpose = st.text_area("Why would you like to meet?", max_chars=2000, key=f"msg_{key}")
         submitted = st.form_submit_button("Request meeting")
     if not submitted:
         return
-    start = datetime.combine(day, clock, tzinfo=timezone.utc)
+    local_start = datetime.combine(day, clock, tzinfo=local_tz)
+    start = local_start.astimezone(timezone.utc)
+    if start.astimezone(local_tz).replace(tzinfo=None) != datetime.combine(day, clock):
+        st.info("That local time does not exist because the clocks change. Choose another time.")
+        return
     end = start + timedelta(minutes=duration)
     if start <= datetime.now(timezone.utc):
-        st.info("Choose a future meeting time in UTC.")
+        st.info("Choose a future meeting time in your time zone.")
         return
     if len(purpose.strip()) < 5:
         st.info("Add a short reason for the meeting (at least 5 characters).")
@@ -398,17 +421,19 @@ def meetings(db, uid):
         return
     if not rows:
         st.info("There are no meeting requests yet.")
+    local_tz = viewer_timezone()
+    st.caption(f"Meeting times in your browser time zone: {local_tz}")
     for row in rows:
         role = "Author" if row["recipient_id"] == uid else "Requester"
         with st.expander(f"{titles.get(row['submission_id'], 'Direct meeting')} · {row['status']} · {role}"):
-            st.write("Proposed start (UTC):", row["proposed_start"])
-            st.write("Proposed end (UTC):", row["proposed_end"])
+            st.write("Proposed start:", display_meeting_time(row["proposed_start"], local_tz))
+            st.write("Proposed end:", display_meeting_time(row["proposed_end"], local_tz))
             st.write("Purpose:", row["purpose"])
             if row["status"] == "accepted" and row.get("format") == "online":
                 room = "OctaMatchmaking" + row["id"].replace("-", "")
                 call_url = "https://meet.jit.si/" + room
                 st.link_button("Open full Jitsi call", call_url)
-                st.caption("The first participant must use Jitsi's Log-in button to start the room. The other participant can then join. The call opens in Jitsi because its free embedded demo disconnects after five minutes.")
+                st.caption("The first participant must use Jitsi's Log-in button to start the room. The other participant can then join.")
             if row.get("private_message"):
                 st.write("Private message:", row["private_message"])
             if row["recipient_id"] == uid and row["status"] == "pending":
