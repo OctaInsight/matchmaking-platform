@@ -465,12 +465,13 @@ if not is_super:
         st.stop()
 
 pages = ["Browse abstracts", "My meetings"]
-if kind == "project_owner":
+if kind == "project_owner" and not is_super:
     pages.insert(1, "Submit an abstract")
 if is_super:
     pages.append("Super admin")
 elif admin_events:
     pages.append("Event admin")
+st.sidebar.caption("Super admin" if is_super else kind.replace("_", " ").title())
 page = st.sidebar.radio("Navigate", pages)
 if page == "Browse abstracts":
     browse(db, uid, events)
