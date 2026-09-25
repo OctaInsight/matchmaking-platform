@@ -7,6 +7,7 @@ from supabase import create_client
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project & Innovation Matchmaking")
+APP_URL = "https://octa-matchmaking.streamlit.app/"
 
 
 def client():
@@ -103,7 +104,10 @@ def auth_screen(db):
                 st.error("Use at least 8 characters.")
             else:
                 try:
-                    res = db.auth.sign_up({"email": email.strip(), "password": password})
+                    res = db.auth.sign_up({
+                        "email": email.strip(), "password": password,
+                        "options": {"email_redirect_to": APP_URL},
+                    })
                     if res.session:
                         st.session_state.tokens = {
                             "access_token": res.session.access_token,
@@ -113,6 +117,22 @@ def auth_screen(db):
                     st.success("Account created. Check your email to confirm it, then sign in.")
                 except Exception as exc:
                     st.error(f"Account creation failed: {exc}")
+
+
+    st.markdown("**Confirmation email expired?**")
+    resend_email = st.text_input("Account email", key="resend_email")
+    if st.button("Resend confirmation email"):
+        if not resend_email.strip():
+            st.error("Enter your account email.")
+        else:
+            try:
+                db.auth.resend({
+                    "type": "signup", "email": resend_email.strip(),
+                    "options": {"email_redirect_to": APP_URL},
+                })
+                st.success("If confirmation is still needed, check your inbox for a new email.")
+            except Exception as exc:
+                st.error(f"Could not resend confirmation: {exc}")
 
 
 def publish(db, uid):
