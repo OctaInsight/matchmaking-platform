@@ -179,24 +179,20 @@ def publish(db, uid, events):
                 st.error(f"Could not publish: {exc}")
 
 
-def send_booking_email(db, recipient_name, start, end):
-    """Send confirmation to the requester after the meeting row was saved."""
+def smtp_missing_settings():
     needed = ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"]
-    if any(not st.secrets.get(name) for name in needed):
-        return False
-    user = db.auth.get_user().user
-    if not user or not user.email:
-        return False
+    return [name for name in needed if not st.secrets.get(name)]
+
+
+def send_email(to_address, subject, body):
+    missing = smtp_missing_settings()
+    if missing:
+        raise ValueError("Missing Streamlit Secrets: " + ", ".join(missing))
     msg = EmailMessage()
-    msg["Subject"] = "Your matchmaking meeting request"
+    msg["Subject"] = subject
     msg["From"] = st.secrets["SMTP_FROM"]
-    msg["To"] = user.email
-    msg.set_content(
-        f"Your meeting request for {recipient_name} has been submitted.\n\n"
-        f"Proposed time (UTC): {start.strftime('%Y-%m-%d %H:%M')}–"
-        f"{end.strftime('%H:%M')}\n\n"
-        "The recipient still needs to accept it. You can check its status in My meetings."
-    )
+    msg["To"] = to_address
+    msg.set_content(body)
     host = st.secrets["SMTP_HOST"]
     port = int(st.secrets["SMTP_PORT"])
     if port == 465:
@@ -208,7 +204,34 @@ def send_booking_email(db, recipient_name, start, end):
             server.starttls(context=ssl.create_default_context())
             server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
             server.send_message(msg)
-    return True
+
+
+def send_booking_email(db, recipient_name, start, end):
+    user = db.auth.get_user().user
+    if not user or not user.email:
+        raise ValueError("Your account has no email address")
+    send_email(
+        user.email,
+        "Your matchmaking meeting request",
+        f"Your meeting request for {recipient_name} has been submitted.\n\n"
+        f"Proposed time (UTC): {start.strftime('%Y-%m-%d %H:%M')}–"
+        f"{end.strftime('%H:%M')}\n\n"
+        "The recipient still needs to accept it. You can check its status in My meetings.",
+    )
+
+
+def smtp_issue(exc):
+    if isinstance(exc, ValueError):
+        return str(exc)
+    if isinstance(exc, smtplib.SMTPAuthenticationError):
+        return "SMTP rejected the username or password. Check that SMTP access is enabled for this mailbox."
+    if isinstance(exc, smtplib.SMTPSenderRefused):
+        return "The email provider rejected the sender address. Check SMTP_FROM."
+    if isinstance(exc, smtplib.SMTPRecipientsRefused):
+        return "The email provider rejected the recipient address."
+    if isinstance(exc, (OSError, smtplib.SMTPException)):
+        return "Could not connect to or send through the SMTP provider. Check the host, port, TLS and mailbox settings."
+    return "Email delivery failed. Check the SMTP settings."
 
 
 def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None):
@@ -244,14 +267,11 @@ def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None)
         st.error(f"Could not save meeting request: {exc}")
         return
     try:
-        sent = send_booking_email(db, recipient_name, start, end)
-    except Exception:
-        sent = False
-    if sent:
+        send_booking_email(db, recipient_name, start, end)
         st.success("Meeting request saved. A confirmation email was sent to you.")
-    else:
+    except Exception as exc:
         st.success("Meeting request saved. You can follow it in My meetings.")
-        st.info("Email confirmation is not configured or could not be delivered.")
+        st.info("The confirmation email was not sent. " + smtp_issue(exc))
 
 
 def browse(db, uid, events):
@@ -350,6 +370,15 @@ def meetings(db, uid):
             st.write("Proposed start (UTC):", row["proposed_start"])
             st.write("Proposed end (UTC):", row["proposed_end"])
             st.write("Purpose:", row["purpose"])
+            if row["status"] == "accepted" and row.get("format") == "online":
+                room = "OctaMatchmaking" + row["id"].replace("-", "")
+                call_url = "https://meet.jit.si/" + room
+                st.link_button("Open Jitsi call", call_url)
+                st.caption("The first person to start a room on meet.jit.si may need to sign in as moderator.")
+                if st.button("Show call here", key=f"jitsi_{row['id']}"):
+                    st.session_state["show_jitsi_" + row["id"]] = True
+                if st.session_state.get("show_jitsi_" + row["id"]):
+                    st.components.v1.iframe(call_url, height=600, scrolling=False)
             if row.get("private_message"):
                 st.write("Private message:", row["private_message"])
             if row["recipient_id"] == uid and row["status"] == "pending":
@@ -431,6 +460,20 @@ def super_dashboard(db, events):
             st.rerun()
         except Exception as exc:
             st.error(f"Could not create event: {exc}")
+    st.markdown("**Email diagnostics**")
+    missing = smtp_missing_settings()
+    if missing:
+        st.info("Booking emails are not configured. Missing Secrets: " + ", ".join(missing))
+    else:
+        st.caption("SMTP settings are present. Send a test to your signed-in email to verify delivery.")
+        if st.button("Send test email to me"):
+            try:
+                own_email = db.auth.get_user().user.email
+                send_email(own_email, "Matchmaking email test",
+                           "This confirms that meeting emails can be sent from the matchmaking app.")
+                st.success("Test email sent to " + own_email + ". Check the inbox and spam folder.")
+            except Exception as exc:
+                st.info(smtp_issue(exc))
     if not events:
         return
     event = st.selectbox("Manage event", events, format_func=lambda e: e["title"])
