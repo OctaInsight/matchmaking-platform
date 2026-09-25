@@ -1,4 +1,5 @@
 import re
+import uuid
 import smtplib
 import socket
 import ssl
@@ -478,6 +479,13 @@ def review_event(db, event):
 
 def super_dashboard(db, events):
     st.subheader("Super admin dashboard")
+    st.markdown("**Test the Jitsi video call**")
+    if "demo_jitsi_room" not in st.session_state:
+        st.session_state.demo_jitsi_room = "OctaMatchmakingDemo" + uuid.uuid4().hex
+    demo_url = "https://meet.jit.si/" + st.session_state.demo_jitsi_room
+    st.link_button("Open test Jitsi room", demo_url)
+    st.code(demo_url)
+    st.caption("Open the link in another browser or send it to a colleague to test a two-person call. This test does not create a booking or send email.")
     with st.form("create_event"):
         st.markdown("**Create event**")
         title = st.text_input("Event title", max_chars=200)
@@ -626,6 +634,13 @@ if role_options[chosen_label] != kind:
         st.rerun()
     except Exception as exc:
         st.sidebar.error(f"Could not switch role: {exc}")
+
+try:
+    incoming = db.table("meeting_requests").select("id", count="exact").eq("recipient_id", uid).eq("status", "pending").execute()
+    if incoming.count:
+        st.sidebar.info(f"{incoming.count} incoming meeting request(s) in My meetings")
+except Exception:
+    pass
 
 pages = ["Browse abstracts", "Meet participants", "My meetings"]
 if kind == "project_owner" and not is_super:
