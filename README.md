@@ -5,7 +5,7 @@ A first Streamlit app for Project Brokerage and Scale2Connect Matchmaking. Parti
 ## Setup
 
 1. In your Supabase project, open **SQL Editor**, paste `database.sql`, and run it once.
-2. In **Authentication → Providers**, enable Email. Set the confirmation and redirect settings appropriate for your app.
+2. In **Authentication → Providers**, enable Email. In **Authentication → URL Configuration**, add `https://octa-matchmaking.streamlit.app/` to **Redirect URLs**. If this Supabase project is only for this app, also set **Site URL** to that address. The app requests that redirect for signup and resend confirmation emails. Supabase may fall back to Site URL if the requested URL is not allowlisted.
 3. In Streamlit Community Cloud, choose **New app**, select this repository, branch `main`, and main file `app.py`.
 4. Under the app's **Advanced settings → Secrets**, enter:
    ```toml
