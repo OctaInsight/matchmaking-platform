@@ -16,6 +16,22 @@ A Streamlit app for Project Brokerage and Scale2Connect Matchmaking using the ex
 
 **Do not run the old `database.sql` against your existing project.** That initial prototype schema is not compatible with your current database and has been removed from this repository.
 
+## Enable the admin review panel
+
+1. Run [admin_setup.sql](admin_setup.sql) in Supabase SQL Editor. It uses the existing tables and adds guarded review functions; it does not recreate tables.
+2. In the same SQL Editor, assign your trusted account the admin role, replacing the placeholder with your sign-in email:
+
+   ```sql
+   update public.profiles p
+   set role = 'admin'::public.user_role
+   from auth.users u
+   where p.id = u.id and u.email = 'YOUR_EMAIL@example.com';
+   ```
+
+3. Sign out and back in. The sidebar will show **Admin review**. Review submitted abstracts there and approve or reject them.
+
+Only trusted accounts should have the admin role. The app uses the publishable key; server-side database functions check the signed-in user's admin role before any review action.
+
 ## Data flow
 
 A new abstract is stored in `submissions` with status `submitted`. Only `approved` submissions appear in public browsing. Approval must be carried out in your existing review process or Supabase dashboard. Comments are stored in `comments`. Meeting requests use `proposed_start` and `proposed_end` in UTC. The requester can cancel a pending request and the recipient can accept or decline it.
