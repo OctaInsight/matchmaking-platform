@@ -32,3 +32,7 @@ SUPABASE_ANON_KEY = "sb_publishable_YOUR_KEY"
 Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically. Never put a secret or service-role key into Streamlit or GitHub.
 
 Project owners submit abstracts with status `submitted`. Event admins approve or reject them. Only approved abstracts appear in browsing. Meeting times are entered in UTC. Media currently uses public poster and YouTube URLs. Online call links and conference scoring remain future work.
+
+## Email delivery
+
+Supabase's built-in email sender has a very low project-wide limit. Before inviting conference participants, configure a custom SMTP provider in **Supabase → Authentication → SMTP Settings** and test signup/confirmation with a second account. Do not disable email confirmation merely to bypass the sending limit.
