@@ -1,41 +1,34 @@
 # Matchmaking Platform
 
-A Streamlit app for Project Brokerage and Scale2Connect Matchmaking using the existing Supabase schema. Participants can sign in, submit abstracts for approval, browse approved submissions, request meetings, and comment. Authors can accept or decline meeting requests.
+Streamlit application for event-based abstract submission, review and matchmaking.
 
-## Deployment
+## Roles
 
-1. Use your existing Supabase project and tables: `profiles`, `submissions`, `comments`, and `meeting_requests`.
-2. In **Authentication → URL Configuration**, allow `https://octa-matchmaking.streamlit.app/` as a redirect URL. If this project only serves this app, set it as Site URL too.
-3. In Streamlit Community Cloud, deploy branch `main`, file `app.py`.
-4. In **App settings → Secrets**, enter:
-   ```toml
-   SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
-   SUPABASE_ANON_KEY = "sb_publishable_YOUR_KEY"
-   ```
-5. Streamlit installs dependencies automatically from `requirements.txt`.
+| Role | What they can do |
+| --- | --- |
+| Super admin | Only the verified Supabase account `octainsight@gmail.com`: create events, assign/remove event sub-admins, review any event, and assign older abstracts to an event. |
+| Event sub-admin | One or more registered users per event: review that event's submitted abstracts and approve or reject them. |
+| Project owner | Select an event, submit an abstract, browse approved abstracts, comment and request meetings. |
+| Investor | Browse approved abstracts, comment and request meetings. |
+| Audience | Browse approved abstracts, comment and request meetings. |
 
-**Do not run the old `database.sql` against your existing project.** That initial prototype schema is not compatible with your current database and has been removed from this repository.
+## One-time database setup
 
-## Enable the admin review panel
+In the existing Supabase project's **SQL Editor**, run [multi_role_setup.sql](multi_role_setup.sql) once. It keeps the existing `profiles`, `submissions`, `comments`, and `meeting_requests` tables. It adds event tables, participant types, guarded review functions and an `event_id` column to submissions. No manual admin role assignment is required: the review functions recognize the verified `octainsight@gmail.com` account by its Supabase Auth user ID and email.
 
-1. Run [admin_setup.sql](admin_setup.sql) in Supabase SQL Editor. It uses the existing tables and adds guarded review functions; it does not recreate tables.
-2. In the same SQL Editor, assign your trusted account the admin role, replacing the placeholder with your sign-in email:
+The earlier [admin_setup.sql](admin_setup.sql) is superseded. Do not run it after this migration. If you ran it earlier, the new migration retires its global review functions.
 
-   ```sql
-   update public.profiles p
-   set role = 'admin'::public.user_role
-   from auth.users u
-   where p.id = u.id and u.email = 'YOUR_EMAIL@example.com';
-   ```
+Sign in to the app as `octainsight@gmail.com`, open **Super admin**, create an event, then enter the registered email address of each person who should be its sub-admin. Sub-admins can review only their assigned events. Older submitted abstracts can be assigned to an event on this page.
 
-3. Sign out and back in. The sidebar will show **Admin review**. Review submitted abstracts there and approve or reject them.
+## Streamlit deployment
 
-Only trusted accounts should have the admin role. The app uses the publishable key; server-side database functions check the signed-in user's admin role before any review action.
+Deploy `app.py` from branch `main`. In **App settings → Secrets**:
 
-## Data flow
+```toml
+SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
+SUPABASE_ANON_KEY = "sb_publishable_YOUR_KEY"
+```
 
-A new abstract is stored in `submissions` with status `submitted`. Only `approved` submissions appear in public browsing. Approval must be carried out in your existing review process or Supabase dashboard. Comments are stored in `comments`. Meeting requests use `proposed_start` and `proposed_end` in UTC. The requester can cancel a pending request and the recipient can accept or decline it.
+Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically. Never put a secret or service-role key into Streamlit or GitHub.
 
-Poster and YouTube media use public URLs. The existing meeting table does not include a call link, so online calls are not yet integrated. Jury scoring and conference operations are deferred.
-
-Never put a Supabase secret or service-role key into the app or repository. The publishable key works with your existing row level security policies.
+Project owners submit abstracts with status `submitted`. Event admins approve or reject them. Only approved abstracts appear in browsing. Meeting times are entered in UTC. Media currently uses public poster and YouTube URLs. Online call links and conference scoring remain future work.
