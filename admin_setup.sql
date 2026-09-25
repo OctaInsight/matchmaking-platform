@@ -21,6 +21,7 @@ create or replace function public.protect_submission_review()
 returns trigger language plpgsql set search_path = '' as $$
 begin
   if (select auth.uid()) is not null and
+     current_setting('app.review_authorized', true) is distinct from 'true' and
      (new.status in ('approved', 'rejected') or
       new.approved_by is distinct from old.approved_by or
       new.approved_at is distinct from old.approved_at) then
@@ -65,6 +66,7 @@ begin
   if p_decision not in ('approved', 'rejected') then
     raise exception 'Decision must be approved or rejected';
   end if;
+  perform set_config('app.review_authorized', 'true', true);
   update public.submissions
   set status = p_decision::public.submission_status,
       approved_at = case when p_decision = 'approved' then now() else null end,
