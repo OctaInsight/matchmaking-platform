@@ -1,2 +1,3 @@
 streamlit>=1.42,<2
 supabase>=2.13,<3
+streamlit-cookies-manager-v2==0.3.1
