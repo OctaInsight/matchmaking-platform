@@ -39,7 +39,7 @@ Project owners submit abstracts with status `submitted`. Event admins approve or
 
 Supabase's built-in email sender has a very low project-wide limit. Before inviting conference participants, configure a custom SMTP provider in **Supabase → Authentication → SMTP Settings** and test signup/confirmation with a second account. Do not disable email confirmation merely to bypass the sending limit.
 
-The app sends the requester a confirmation email after saving a meeting request. **Streamlit does not automatically inherit Supabase SMTP settings.** Add these to Streamlit **App settings → Secrets**, using credentials from your email provider:
+The app sends the requester a confirmation email after saving a new meeting request. In **Super admin → Email diagnostics**, use **Send test email to me** to check the SMTP configuration and delivery. Earlier requests do not trigger an email retroactively. **Streamlit does not automatically inherit Supabase SMTP settings.** Add these to Streamlit **App settings → Secrets**, using credentials from your email provider:
 
 ```toml
 SMTP_HOST = "smtp.example.com"
@@ -50,3 +50,7 @@ SMTP_FROM = "Matchmaking <meetings@your-verified-domain.example>"
 ```
 
 Port 587 uses STARTTLS; port 465 uses TLS from connection start. The sender address must be permitted by your SMTP provider. Without these settings the request is still saved, but the app cannot send its confirmation email. Never commit these values to GitHub.
+
+## Jitsi calls
+
+When a recipient accepts an online meeting request, both participants see the same private-looking, hard-to-guess Jitsi room in **My meetings**. They can open it in a new tab or display it inside the app. Jitsi's public meet.jit.si service may require the first participant to sign in as moderator before the room begins. Anyone given the room URL can join, so share it only with the intended participants.
