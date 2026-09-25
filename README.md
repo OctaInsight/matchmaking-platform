@@ -8,9 +8,9 @@ Streamlit application for event-based abstract submission, review and matchmakin
 | --- | --- |
 | Super admin | Only the verified Supabase account `octainsight@gmail.com`: create events, assign/remove event sub-admins, review any event, and assign older abstracts to an event. |
 | Event sub-admin | One or more registered users per event: review that event's submitted abstracts and approve or reject them. |
-| Project owner | Select an event, submit an abstract, browse approved abstracts, comment and request meetings. |
-| Investor | Browse approved abstracts, comment and request meetings. |
-| Audience | Browse approved abstracts, comment and request meetings. |
+| Project owner | Select an event, submit an abstract, browse approved abstracts, comment and request meetings with any participant. |
+| Investor | Browse approved abstracts, comment and request meetings with any participant. |
+| Audience | Browse approved abstracts, comment and request meetings with any participant. |
 
 ## One-time database setup
 
@@ -19,6 +19,8 @@ In the existing Supabase project's **SQL Editor**, run [multi_role_setup.sql](mu
 The earlier global-admin setup has been removed. If you ran it earlier, this migration retires its global review functions.
 
 Sign in to the app as `octainsight@gmail.com`, open **Super admin**, create an event, then enter the registered email address of each person who should be its sub-admin. Sub-admins can review only their assigned events. Older submitted abstracts can be assigned to an event on this page.
+
+Participants can switch between Project owner, Investor and Audience at any time from the sidebar. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
 
 ## Streamlit deployment
 
@@ -36,3 +38,15 @@ Project owners submit abstracts with status `submitted`. Event admins approve or
 ## Email delivery
 
 Supabase's built-in email sender has a very low project-wide limit. Before inviting conference participants, configure a custom SMTP provider in **Supabase → Authentication → SMTP Settings** and test signup/confirmation with a second account. Do not disable email confirmation merely to bypass the sending limit.
+
+The app sends the requester a confirmation email after saving a meeting request. **Streamlit does not automatically inherit Supabase SMTP settings.** Add these to Streamlit **App settings → Secrets**, using credentials from your email provider:
+
+```toml
+SMTP_HOST = "smtp.example.com"
+SMTP_PORT = 587
+SMTP_USERNAME = "your-smtp-username"
+SMTP_PASSWORD = "your-smtp-password"
+SMTP_FROM = "Matchmaking <meetings@your-verified-domain.example>"
+```
+
+Port 587 uses STARTTLS; port 465 uses TLS from connection start. The sender address must be permitted by your SMTP provider. Without these settings the request is still saved, but the app cannot send its confirmation email. Never commit these values to GitHub.
