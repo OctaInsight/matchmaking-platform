@@ -97,3 +97,41 @@ create policy "Delete own feedback" on public.feedback
 
 -- Do not use the service_role key in Streamlit. Configure email confirmation in
 -- Supabase Authentication and set your deployment URL as the redirect URL.
+
+-- Keep meeting ownership and proposed time immutable. Only the requester may
+-- cancel a pending request; only the author may accept or decline it.
+create or replace function public.guard_meeting_update()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if new.id is distinct from old.id
+     or new.abstract_id is distinct from old.abstract_id
+     or new.requester_id is distinct from old.requester_id
+     or new.author_id is distinct from old.author_id
+     or new.message is distinct from old.message
+     or new.proposed_at is distinct from old.proposed_at
+     or new.created_at is distinct from old.created_at then
+    raise exception 'Meeting identity and proposal cannot be changed';
+  end if;
+  if old.status <> 'pending' then
+    raise exception 'A completed request cannot be changed';
+  end if;
+  if (select auth.uid()) = old.requester_id then
+    if new.status <> 'cancelled' or new.meeting_link is distinct from old.meeting_link then
+      raise exception 'Requester may only cancel a pending request';
+    end if;
+  elsif (select auth.uid()) = old.author_id then
+    if new.status not in ('accepted', 'declined') then
+      raise exception 'Author may only accept or decline a pending request';
+    end if;
+    if new.status = 'declined' and new.meeting_link is not null then
+      raise exception 'Declined requests cannot have a meeting link';
+    end if;
+  else
+    raise exception 'Not a meeting participant';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists guard_meeting_update on public.meeting_requests;
+create trigger guard_meeting_update before update on public.meeting_requests
+for each row execute function public.guard_meeting_update();
