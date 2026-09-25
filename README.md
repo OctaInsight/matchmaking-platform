@@ -53,4 +53,4 @@ Port 587 uses STARTTLS; port 465 uses TLS from connection start. The sender addr
 
 ## Jitsi calls
 
-When a recipient accepts an online meeting request, both participants see the same private-looking, hard-to-guess Jitsi room in **My meetings**. They can open it in a new tab or display it inside the app. Jitsi's public meet.jit.si service may require the first participant to sign in as moderator before the room begins. Anyone given the room URL can join, so share it only with the intended participants.
+When a recipient accepts an online meeting request, both participants see the same private-looking, hard-to-guess Jitsi room in **My meetings**. They open the full call in a new tab. The first participant must sign in with Jitsi's Log-in button to start the room; the other can then join. Public meet.jit.si embedded calls are demo-only and disconnect after five minutes, so the app does not embed them. An in-app production call would require Jitsi as a Service or a self-hosted Jitsi deployment. Anyone given the room URL can join, so share it only with the intended participants.
