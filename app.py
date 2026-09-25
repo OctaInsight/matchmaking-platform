@@ -407,12 +407,8 @@ def meetings(db, uid):
             if row["status"] == "accepted" and row.get("format") == "online":
                 room = "OctaMatchmaking" + row["id"].replace("-", "")
                 call_url = "https://meet.jit.si/" + room
-                st.link_button("Open Jitsi call", call_url)
-                st.caption("The first person to start a room on meet.jit.si may need to sign in as moderator.")
-                if st.button("Show call here", key=f"jitsi_{row['id']}"):
-                    st.session_state["show_jitsi_" + row["id"]] = True
-                if st.session_state.get("show_jitsi_" + row["id"]):
-                    st.components.v1.iframe(call_url, height=600, scrolling=False)
+                st.link_button("Open full Jitsi call", call_url)
+                st.caption("The first participant must use Jitsi's Log-in button to start the room. The other participant can then join. The call opens in Jitsi because its free embedded demo disconnects after five minutes.")
             if row.get("private_message"):
                 st.write("Private message:", row["private_message"])
             if row["recipient_id"] == uid and row["status"] == "pending":
@@ -485,7 +481,7 @@ def super_dashboard(db, events):
     demo_url = "https://meet.jit.si/" + st.session_state.demo_jitsi_room
     st.link_button("Open test Jitsi room", demo_url)
     st.code(demo_url)
-    st.caption("Open the link in another browser or send it to a colleague to test a two-person call. This test does not create a booking or send email.")
+    st.caption("Open the link in another browser or send it to a colleague. The first participant must log in to Jitsi to start the room. This test does not create a booking or send email.")
     with st.form("create_event"):
         st.markdown("**Create event**")
         title = st.text_input("Event title", max_chars=200)
