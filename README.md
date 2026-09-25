@@ -1,23 +1,25 @@
 # Matchmaking Platform
 
-A first Streamlit app for Project Brokerage and Scale2Connect Matchmaking. Participants can create accounts, publish abstracts with poster and YouTube links, browse submissions, request meetings, and leave feedback. Authors can accept or decline requests and share a call link. Jury scoring and conference operations are deferred.
+A Streamlit app for Project Brokerage and Scale2Connect Matchmaking using the existing Supabase schema. Participants can sign in, submit abstracts for approval, browse approved submissions, request meetings, and comment. Authors can accept or decline meeting requests.
 
-## Setup
+## Deployment
 
-1. In your Supabase project, open **SQL Editor**, paste `database.sql`, and run it once.
-2. In **Authentication → Providers**, enable Email. In **Authentication → URL Configuration**, add `https://octa-matchmaking.streamlit.app/` to **Redirect URLs**. If this Supabase project is only for this app, also set **Site URL** to that address. The app requests that redirect for signup and resend confirmation emails. Supabase may fall back to Site URL if the requested URL is not allowlisted.
-3. In Streamlit Community Cloud, choose **New app**, select this repository, branch `main`, and main file `app.py`.
-4. Under the app's **Advanced settings → Secrets**, enter:
+1. Use your existing Supabase project and tables: `profiles`, `submissions`, `comments`, and `meeting_requests`.
+2. In **Authentication → URL Configuration**, allow `https://octa-matchmaking.streamlit.app/` as a redirect URL. If this project only serves this app, set it as Site URL too.
+3. In Streamlit Community Cloud, deploy branch `main`, file `app.py`.
+4. In **App settings → Secrets**, enter:
    ```toml
    SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
-   SUPABASE_ANON_KEY = "YOUR-PUBLISHABLE-OR-ANON-KEY"
+   SUPABASE_ANON_KEY = "sb_publishable_YOUR_KEY"
    ```
-5. Deploy. Streamlit installs packages from `requirements.txt` automatically. No local Python environment is needed.
+5. Streamlit installs dependencies automatically from `requirements.txt`.
 
-For local use only, copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml`, fill in the values, install requirements, and run `streamlit run app.py`. Never commit real keys or a service_role key.
+**Do not run the old `database.sql` against your existing project.** That initial prototype schema is not compatible with your current database and has been removed from this repository.
 
-Posters are accepted as a public image or PDF URL. Videos must be public YouTube URLs. Meeting requests use the time zone selected by each requester; authors see the stored UTC time. Calls use links supplied by the author, so no video service integration is needed.
+## Data flow
 
-## Security
+A new abstract is stored in `submissions` with status `submitted`. Only `approved` submissions appear in public browsing. Approval must be carried out in your existing review process or Supabase dashboard. Comments are stored in `comments`. Meeting requests use `proposed_start` and `proposed_end` in UTC. The requester can cancel a pending request and the recipient can accept or decline it.
 
-Supabase row level security protects data for signed-in users. Names, organisations, abstracts, and feedback are visible to signed-in participants. Meeting messages and links are visible only to the requester and author. Treat submitted poster and video URLs as public content.
+Poster and YouTube media use public URLs. The existing meeting table does not include a call link, so online calls are not yet integrated. Jury scoring and conference operations are deferred.
+
+Never put a Supabase secret or service-role key into the app or repository. The publishable key works with your existing row level security policies.
