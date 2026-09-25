@@ -361,6 +361,20 @@ def super_dashboard(db, events):
     if not events:
         return
     event = st.selectbox("Manage event", events, format_func=lambda e: e["title"])
+    try:
+        older = db.rpc("platform_unassigned_submissions").execute().data or []
+        if older:
+            st.markdown("**Abstracts submitted before events were created**")
+            for old in older:
+                left, right = st.columns([4, 1])
+                left.write(old["title"])
+                if right.button("Assign to this event", key=f"assign_{old['id']}"):
+                    db.rpc("platform_assign_submission", {
+                        "p_submission_id": old["id"], "p_event_id": event["id"],
+                    }).execute()
+                    st.rerun()
+    except Exception as exc:
+        st.error(f"Could not load older abstracts: {exc}")
     with st.form("grant_admin"):
         email = st.text_input("Registered user's email")
         grant = st.form_submit_button("Give event sub-admin rights")
