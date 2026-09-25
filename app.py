@@ -135,9 +135,14 @@ def auth_screen(db):
                 st.error(f"Could not resend confirmation: {exc}")
 
 
-def publish(db, uid):
+def publish(db, uid, events):
     st.subheader("Submit an abstract or innovation idea")
     with st.form("abstract"):
+        event_titles = {e["title"]: e["id"] for e in events if e.get("is_active")}
+        if not event_titles:
+            st.info("No event is open for submissions yet.")
+            st.stop()
+        event_title = st.selectbox("Event", list(event_titles))
         title = st.text_input("Title", max_chars=200, help="At least 5 characters.")
         thematic_area = st.text_input("Thematic area (optional)", max_chars=160)
         summary = st.text_input("Short summary (optional)", max_chars=300)
@@ -155,7 +160,8 @@ def publish(db, uid):
             try:
                 slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] + "-" + __import__("uuid").uuid4().hex[:8]
                 db.table("submissions").insert({
-                    "owner_id": uid, "title": title.strip(), "slug": slug,
+                    "owner_id": uid, "event_id": event_titles[event_title],
+                    "title": title.strip(), "slug": slug,
                     "abstract_text": body.strip(), "short_summary": summary.strip() or None,
                     "thematic_area": thematic_area.strip() or None,
                     "keywords": [word.strip() for word in keywords.split(",") if word.strip()],
@@ -198,10 +204,15 @@ def request_form(db, item, uid):
                 st.error(f"Could not send request: {exc}")
 
 
-def browse(db, uid):
+def browse(db, uid, events):
     st.subheader("Browse abstracts")
+    event_titles = {e["title"]: e["id"] for e in events}
+    if not event_titles:
+        st.info("There are no events yet.")
+        return
+    selected_event = st.selectbox("Event", list(event_titles), key="browse_event")
     try:
-        items = db.table("submissions").select("*").eq("status", "approved").order("created_at", desc=True).execute().data
+        items = db.table("submissions").select("*").eq("event_id", event_titles[selected_event]).eq("status", "approved").order("created_at", desc=True).execute().data
         people = db.table("profiles").select("id,full_name,organisation").execute().data
         names = {person["id"]: person for person in people}
     except Exception as exc:
@@ -291,26 +302,23 @@ def meetings(db, uid):
                         st.error(f"Could not cancel request: {exc}")
 
 
-def admin_review(db):
-    st.subheader("Review submitted abstracts")
-    st.caption("Only approved submissions appear in public browsing.")
+def review_event(db, event):
+    st.subheader("Review: " + event["title"])
     try:
-        items = db.rpc("admin_pending_submissions").execute().data or []
-    except Exception:
-        st.info("Admin review needs the database setup. Run admin_setup.sql in the Supabase SQL Editor.")
+        items = db.rpc("platform_review_queue", {"p_event_id": event["id"]}).execute().data or []
+    except Exception as exc:
+        st.error(f"Could not load review queue: {exc}")
         return
     if not items:
-        st.success("No submissions are waiting for review.")
-        return
-    st.write(f"{len(items)} submission(s) awaiting review")
+        st.info("No abstracts are awaiting review for this event.")
     for item in items:
         with st.expander(item["title"]):
             st.caption(f"Submitted: {item.get('submitted_at') or item.get('created_at')}")
-            if item.get("thematic_area"):
-                st.write("Thematic area:", item["thematic_area"])
+            st.write(item["abstract_text"])
             if item.get("short_summary"):
                 st.write("Summary:", item["short_summary"])
-            st.write(item["abstract_text"])
+            if item.get("thematic_area"):
+                st.write("Thematic area:", item["thematic_area"])
             if item.get("keywords"):
                 st.write("Keywords:", ", ".join(item["keywords"]))
             if item.get("poster_url"):
@@ -325,13 +333,87 @@ def admin_review(db):
                 decision = "rejected"
             if decision:
                 try:
-                    db.rpc("admin_review_submission", {
+                    db.rpc("platform_review_submission", {
                         "p_submission_id": item["id"], "p_decision": decision,
                     }).execute()
-                    st.success(f"Submission {decision}.")
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Could not review submission: {exc}")
+
+
+def super_dashboard(db, events):
+    st.subheader("Super admin dashboard")
+    with st.form("create_event"):
+        st.markdown("**Create event**")
+        title = st.text_input("Event title", max_chars=200)
+        description = st.text_area("Description")
+        create = st.form_submit_button("Create event")
+    if create:
+        try:
+            db.rpc("platform_create_event", {
+                "p_title": title.strip(), "p_description": description.strip(),
+                "p_starts_at": None, "p_ends_at": None,
+            }).execute()
+            st.success("Event created.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not create event: {exc}")
+    if not events:
+        return
+    event = st.selectbox("Manage event", events, format_func=lambda e: e["title"])
+    with st.form("grant_admin"):
+        email = st.text_input("Registered user's email")
+        grant = st.form_submit_button("Give event sub-admin rights")
+    if grant:
+        try:
+            db.rpc("platform_grant_event_admin", {
+                "p_event_id": event["id"], "p_email": email.strip(),
+            }).execute()
+            st.success("Event sub-admin added.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not add sub-admin: {exc}")
+    try:
+        admins = db.rpc("platform_list_event_admins", {"p_event_id": event["id"]}).execute().data or []
+        for person in admins:
+            left, right = st.columns([4, 1])
+            left.write(person.get("full_name") or person["email"])
+            if right.button("Remove", key=f"remove_{event['id']}_{person['user_id']}"):
+                db.rpc("platform_revoke_event_admin", {
+                    "p_event_id": event["id"], "p_user_id": person["user_id"],
+                }).execute()
+                st.rerun()
+    except Exception as exc:
+        st.error(f"Could not load event admins: {exc}")
+    review_event(db, event)
+
+
+def participant_type(db, uid):
+    rows = db.table("platform_user_types").select("user_type").eq("user_id", uid).execute().data
+    if rows:
+        return rows[0]["user_type"]
+    st.subheader("Choose how you will participate")
+    labels = {
+        "Project owner": "project_owner",
+        "Investor": "investor",
+        "Audience": "audience",
+    }
+    choice = st.radio("Your role", list(labels))
+    if st.button("Continue"):
+        try:
+            db.table("platform_user_types").insert({
+                "user_id": uid, "user_type": labels[choice],
+            }).execute()
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Could not save your role: {exc}")
+    st.stop()
+
+
+def available_events(db):
+    return db.table("platform_events").select("*").order("created_at", desc=True).execute().data or []
+
+
 
 
 db = client()
@@ -350,19 +432,40 @@ with st.sidebar:
 
 save_profile(db, uid)
 try:
-    my_profile = db.table("profiles").select("role").eq("id", uid).single().execute().data
-    is_admin = my_profile.get("role") == "admin"
-except Exception:
-    is_admin = False
-pages = ["Browse abstracts", "Submit an abstract", "My meetings"]
-if is_admin:
-    pages.append("Admin review")
+    is_super = bool(db.rpc("platform_is_super_admin").execute().data)
+    events = available_events(db)
+    kind = participant_type(db, uid) if not is_super else "project_owner"
+except Exception as exc:
+    st.info("The event and user-role database setup is not active yet. Run multi_role_setup.sql in Supabase.")
+    st.stop()
+
+admin_events = []
+if not is_super:
+    try:
+        admin_events = [
+            e for e in events
+            if db.rpc("platform_is_event_admin", {"p_event_id": e["id"]}).execute().data
+        ]
+    except Exception as exc:
+        st.error(f"Could not check event permissions: {exc}")
+        st.stop()
+
+pages = ["Browse abstracts", "My meetings"]
+if kind == "project_owner":
+    pages.insert(1, "Submit an abstract")
+if is_super:
+    pages.append("Super admin")
+elif admin_events:
+    pages.append("Event admin")
 page = st.sidebar.radio("Navigate", pages)
 if page == "Browse abstracts":
-    browse(db, uid)
+    browse(db, uid, events)
 elif page == "Submit an abstract":
-    publish(db, uid)
+    publish(db, uid, events)
 elif page == "My meetings":
     meetings(db, uid)
+elif page == "Super admin":
+    super_dashboard(db, events)
 else:
-    admin_review(db)
+    event = st.selectbox("Your event", admin_events, format_func=lambda e: e["title"])
+    review_event(db, event)
