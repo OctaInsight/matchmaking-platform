@@ -1,5 +1,6 @@
 import re
 import smtplib
+import socket
 import ssl
 from email.message import EmailMessage
 from datetime import datetime, timezone, timedelta
@@ -224,13 +225,25 @@ def smtp_issue(exc):
     if isinstance(exc, ValueError):
         return str(exc)
     if isinstance(exc, smtplib.SMTPAuthenticationError):
-        return "SMTP rejected the username or password. Check that SMTP access is enabled for this mailbox."
+        return f"SMTP login was rejected (code {exc.smtp_code}). Check the mailbox password or app password and enable SMTP authentication."
     if isinstance(exc, smtplib.SMTPSenderRefused):
-        return "The email provider rejected the sender address. Check SMTP_FROM."
+        return f"The sender address was rejected (code {exc.smtp_code}). Check SMTP_FROM."
     if isinstance(exc, smtplib.SMTPRecipientsRefused):
         return "The email provider rejected the recipient address."
-    if isinstance(exc, (OSError, smtplib.SMTPException)):
-        return "Could not connect to or send through the SMTP provider. Check the host, port, TLS and mailbox settings."
+    if isinstance(exc, smtplib.SMTPNotSupportedError):
+        return "This SMTP server does not support the selected TLS method. Check the host and port."
+    if isinstance(exc, ssl.SSLError):
+        return "TLS negotiation failed. Check that port 465 uses SSL and port 587 uses STARTTLS."
+    if isinstance(exc, socket.gaierror):
+        return "The SMTP host name could not be found. Check SMTP_HOST."
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return "The SMTP connection timed out. Check the host and port or ask the provider whether cloud servers can connect."
+    if isinstance(exc, ConnectionRefusedError):
+        return "The SMTP server refused the connection. Check the host and port."
+    if isinstance(exc, smtplib.SMTPResponseException):
+        return f"The SMTP server returned code {exc.smtp_code}. Check the provider's SMTP settings."
+    if isinstance(exc, OSError):
+        return f"SMTP network error (system code {exc.errno}). Check host, port and network access."
     return "Email delivery failed. Check the SMTP settings."
 
 
@@ -465,7 +478,8 @@ def super_dashboard(db, events):
     if missing:
         st.info("Booking emails are not configured. Missing Secrets: " + ", ".join(missing))
     else:
-        st.caption("SMTP settings are present. Send a test to your signed-in email to verify delivery.")
+        st.caption(f"Configured host: {st.secrets['SMTP_HOST']} · port: {st.secrets['SMTP_PORT']} · sender: {st.secrets['SMTP_FROM']}")
+        st.caption("Send a test to your signed-in email to verify delivery.")
         if st.button("Send test email to me"):
             try:
                 own_email = db.auth.get_user().user.email
