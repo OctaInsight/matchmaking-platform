@@ -1,5 +1,8 @@
 import re
-from datetime import datetime, timezone
+import smtplib
+import ssl
+from email.message import EmailMessage
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 
 import streamlit as st
@@ -176,35 +179,79 @@ def publish(db, uid, events):
                 st.error(f"Could not publish: {exc}")
 
 
-def request_form(db, item, uid):
-    if item["owner_id"] == uid:
+def send_booking_email(db, recipient_name, start, end):
+    """Send confirmation to the requester after the meeting row was saved."""
+    needed = ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"]
+    if any(not st.secrets.get(name) for name in needed):
+        return False
+    user = db.auth.get_user().user
+    if not user or not user.email:
+        return False
+    msg = EmailMessage()
+    msg["Subject"] = "Your matchmaking meeting request"
+    msg["From"] = st.secrets["SMTP_FROM"]
+    msg["To"] = user.email
+    msg.set_content(
+        f"Your meeting request for {recipient_name} has been submitted.\n\n"
+        f"Proposed time (UTC): {start.strftime('%Y-%m-%d %H:%M')}–"
+        f"{end.strftime('%H:%M')}\n\n"
+        "The recipient still needs to accept it. You can check its status in My meetings."
+    )
+    host = st.secrets["SMTP_HOST"]
+    port = int(st.secrets["SMTP_PORT"])
+    if port == 465:
+        with smtplib.SMTP_SSL(host, port, timeout=10, context=ssl.create_default_context()) as server:
+            server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
+            server.send_message(msg)
+    else:
+        with smtplib.SMTP(host, port, timeout=10) as server:
+            server.starttls(context=ssl.create_default_context())
+            server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
+            server.send_message(msg)
+    return True
+
+
+def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None):
+    if recipient_id == uid:
         return
-    with st.form(f"request_{item['id']}"):
-        st.caption("Request a meeting with the author. Enter a date and time in UTC.")
-        day = st.date_input("Date (UTC)", key=f"day_{item['id']}")
-        clock = st.time_input("Start time (UTC)", key=f"time_{item['id']}")
-        duration = st.selectbox("Duration", [15, 30, 45, 60], index=1, key=f"duration_{item['id']}")
-        message = st.text_area("Why would you like to meet?", max_chars=2000, key=f"msg_{item['id']}")
-        submitted = st.form_submit_button("Send meeting request")
-    if submitted:
-        when = datetime.combine(day, clock, tzinfo=timezone.utc)
-        if when <= datetime.now(timezone.utc):
-            st.info("Choose a future meeting time in UTC.")
-        elif len(message.strip()) < 5:
-            st.info("Add a short reason for the meeting (at least 5 characters).")
-        else:
-            try:
-                from datetime import timedelta
-                db.table("meeting_requests").insert({
-                    "submission_id": item["id"], "requester_id": uid,
-                    "recipient_id": item["owner_id"], "purpose": message.strip(),
-                    "proposed_start": when.isoformat(),
-                    "proposed_end": (when + timedelta(minutes=duration)).isoformat(),
-                    "format": "online",
-                }).execute()
-                st.success("Meeting request sent.")
-            except Exception as exc:
-                st.error(f"Could not send request: {exc}")
+    with st.form(f"request_{key}"):
+        st.caption("Propose a meeting time in UTC. The recipient will accept or decline.")
+        day = st.date_input("Date (UTC)", key=f"day_{key}")
+        clock = st.time_input("Start time (UTC)", key=f"time_{key}")
+        duration = st.selectbox("Duration in minutes", [15, 30, 45, 60], index=1, key=f"duration_{key}")
+        purpose = st.text_area("Why would you like to meet?", max_chars=2000, key=f"msg_{key}")
+        submitted = st.form_submit_button("Request meeting")
+    if not submitted:
+        return
+    start = datetime.combine(day, clock, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=duration)
+    if start <= datetime.now(timezone.utc):
+        st.info("Choose a future meeting time in UTC.")
+        return
+    if len(purpose.strip()) < 5:
+        st.info("Add a short reason for the meeting (at least 5 characters).")
+        return
+    try:
+        db.table("meeting_requests").insert({
+            "submission_id": submission_id,
+            "requester_id": uid, "recipient_id": recipient_id,
+            "purpose": purpose.strip(),
+            "proposed_start": start.isoformat(),
+            "proposed_end": end.isoformat(),
+            "format": "online",
+        }).execute()
+    except Exception as exc:
+        st.error(f"Could not save meeting request: {exc}")
+        return
+    try:
+        sent = send_booking_email(db, recipient_name, start, end)
+    except Exception:
+        sent = False
+    if sent:
+        st.success("Meeting request saved. A confirmation email was sent to you.")
+    else:
+        st.success("Meeting request saved. You can follow it in My meetings.")
+        st.info("Email confirmation is not configured or could not be delivered.")
 
 
 def browse(db, uid, events):
@@ -241,7 +288,7 @@ def browse(db, uid, events):
                     st.image(url)
             if item.get("video_url"):
                 st.video(item["video_url"])
-            request_form(db, item, uid)
+            meeting_form(db, uid, item["owner_id"], author.get("full_name") or "the author", item["id"], item["id"])
             st.markdown("**Feedback**")
             comments = db.table("comments").select("*").eq("submission_id", item["id"]).eq("status", "visible").order("created_at").execute().data
             for comment in comments:
@@ -263,6 +310,29 @@ def browse(db, uid, events):
                         st.error(f"Could not post feedback: {exc}")
 
 
+def directory(db, uid):
+    st.subheader("Meet participants")
+    st.caption("Request a meeting with any registered participant, even if they have no abstract.")
+    try:
+        people = db.table("profiles").select("id,full_name,organisation,job_title").order("full_name").execute().data or []
+    except Exception as exc:
+        st.error(f"Could not load participants: {exc}")
+        return
+    query = st.text_input("Find a participant")
+    matches = [
+        p for p in people if p["id"] != uid and query.lower() in
+        " ".join([p.get("full_name") or "", p.get("organisation") or "", p.get("job_title") or ""]).lower()
+    ]
+    if not matches:
+        st.info("No matching participants yet.")
+    for person in matches:
+        name = person.get("full_name") or "Participant"
+        with st.expander(name + (" · " + person["organisation"] if person.get("organisation") else "")):
+            if person.get("job_title"):
+                st.caption(person["job_title"])
+            meeting_form(db, uid, person["id"], name, "person_" + person["id"])
+
+
 def meetings(db, uid):
     st.subheader("Meeting requests")
     try:
@@ -276,7 +346,7 @@ def meetings(db, uid):
         st.info("There are no meeting requests yet.")
     for row in rows:
         role = "Author" if row["recipient_id"] == uid else "Requester"
-        with st.expander(f"{titles.get(row['submission_id'], 'Submission')} · {row['status']} · {role}"):
+        with st.expander(f"{titles.get(row['submission_id'], 'Direct meeting')} · {row['status']} · {role}"):
             st.write("Proposed start (UTC):", row["proposed_start"])
             st.write("Proposed end (UTC):", row["proposed_end"])
             st.write("Purpose:", row["purpose"])
@@ -451,7 +521,7 @@ save_profile(db, uid)
 try:
     is_super = bool(db.rpc("platform_is_super_admin").execute().data)
     events = available_events(db)
-    kind = participant_type(db, uid) if not is_super else "project_owner"
+    kind = participant_type(db, uid)
 except Exception as exc:
     st.info("The event and user-role database setup is not active yet. Run multi_role_setup.sql in Supabase.")
     st.stop()
@@ -467,7 +537,20 @@ if not is_super:
         st.error(f"Could not check event permissions: {exc}")
         st.stop()
 
-pages = ["Browse abstracts", "My meetings"]
+role_options = {"Project owner": "project_owner", "Investor": "investor", "Audience": "audience"}
+role_labels = list(role_options)
+current_label = next(label for label, value in role_options.items() if value == kind)
+chosen_label = st.sidebar.selectbox("Act as", role_labels, index=role_labels.index(current_label))
+if role_options[chosen_label] != kind:
+    try:
+        db.table("platform_user_types").update({
+            "user_type": role_options[chosen_label],
+        }).eq("user_id", uid).execute()
+        st.rerun()
+    except Exception as exc:
+        st.sidebar.error(f"Could not switch role: {exc}")
+
+pages = ["Browse abstracts", "Meet participants", "My meetings"]
 if kind == "project_owner" and not is_super:
     pages.insert(1, "Submit an abstract")
 if is_super:
@@ -480,6 +563,8 @@ if page == "Browse abstracts":
     browse(db, uid, events)
 elif page == "Submit an abstract":
     publish(db, uid, events)
+elif page == "Meet participants":
+    directory(db, uid)
 elif page == "My meetings":
     meetings(db, uid)
 elif page == "Super admin":
