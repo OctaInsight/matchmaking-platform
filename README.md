@@ -16,7 +16,7 @@ Streamlit application for event-based abstract submission, review and matchmakin
 
 In the existing Supabase project's **SQL Editor**, run [multi_role_setup.sql](multi_role_setup.sql) once. It keeps the existing `profiles`, `submissions`, `comments`, and `meeting_requests` tables. It adds event tables, participant types, guarded review functions and an `event_id` column to submissions. No manual admin role assignment is required: the review functions recognize the verified `octainsight@gmail.com` account by its Supabase Auth user ID and email.
 
-The earlier [admin_setup.sql](admin_setup.sql) is superseded. Do not run it after this migration. If you ran it earlier, the new migration retires its global review functions.
+The earlier global-admin setup has been removed. If you ran it earlier, this migration retires its global review functions.
 
 Sign in to the app as `octainsight@gmail.com`, open **Super admin**, create an event, then enter the registered email address of each person who should be its sub-admin. Sub-admins can review only their assigned events. Older submitted abstracts can be assigned to an event on this page.
 
