@@ -219,6 +219,38 @@ begin
 end;
 $$;
 
+create or replace function public.platform_unassigned_submissions()
+returns setof public.submissions
+language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.platform_is_super_admin() then
+    raise exception 'Super admin access required' using errcode = '42501';
+  end if;
+  return query select s.* from public.submissions s
+    where s.event_id is null and s.status::text = 'submitted'
+    order by s.created_at;
+end;
+$$;
+
+create or replace function public.platform_assign_submission(
+  p_submission_id uuid, p_event_id uuid
+) returns void language plpgsql security definer set search_path = '' as $$
+begin
+  if not public.platform_is_super_admin() then
+    raise exception 'Super admin access required' using errcode = '42501';
+  end if;
+  if not exists (select 1 from public.platform_events where id = p_event_id) then
+    raise exception 'Event not found';
+  end if;
+  perform set_config('app.platform_review','true',true);
+  update public.submissions set event_id = p_event_id
+    where id = p_submission_id and event_id is null and status::text = 'submitted';
+  if not found then
+    raise exception 'Unassigned submitted abstract not found';
+  end if;
+end;
+$$;
+
 -- Retire the previous global-admin review RPCs if that setup was already run.
 drop function if exists public.admin_pending_submissions();
 drop function if exists public.admin_review_submission(uuid,text);
@@ -239,3 +271,8 @@ grant execute on function public.platform_revoke_event_admin(uuid,uuid) to authe
 grant execute on function public.platform_list_event_admins(uuid) to authenticated;
 grant execute on function public.platform_review_queue(uuid) to authenticated;
 grant execute on function public.platform_review_submission(uuid,text) to authenticated;
+
+revoke all on function public.platform_unassigned_submissions() from public, anon;
+revoke all on function public.platform_assign_submission(uuid,uuid) from public, anon;
+grant execute on function public.platform_unassigned_submissions() to authenticated;
+grant execute on function public.platform_assign_submission(uuid,uuid) to authenticated;
