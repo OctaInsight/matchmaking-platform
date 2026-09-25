@@ -165,7 +165,8 @@ returns trigger language plpgsql set search_path = '' as $$
 begin
   if (select auth.uid()) is not null and
      current_setting('app.platform_review', true) is distinct from 'true' then
-    if new.owner_id is distinct from old.owner_id or
+    if old.status in ('approved','rejected') or
+       new.owner_id is distinct from old.owner_id or
        new.event_id is distinct from old.event_id or
        (new.status is distinct from old.status and
         (new.status in ('approved','rejected') or old.status in ('approved','rejected'))) or
