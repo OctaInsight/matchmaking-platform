@@ -185,6 +185,13 @@ def smtp_missing_settings():
     return [name for name in needed if not st.secrets.get(name)]
 
 
+class EmailStageError(Exception):
+    def __init__(self, stage, original):
+        self.stage = stage
+        self.original = original
+        super().__init__(str(original))
+
+
 def send_email(to_address, subject, body):
     missing = smtp_missing_settings()
     if missing:
@@ -196,15 +203,24 @@ def send_email(to_address, subject, body):
     msg.set_content(body)
     host = st.secrets["SMTP_HOST"]
     port = int(st.secrets["SMTP_PORT"])
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, timeout=10, context=ssl.create_default_context()) as server:
-            server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
-            server.send_message(msg)
-    else:
-        with smtplib.SMTP(host, port, timeout=10) as server:
-            server.starttls(context=ssl.create_default_context())
-            server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
-            server.send_message(msg)
+    stage = "connect"
+    try:
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=10, context=ssl.create_default_context()) as server:
+                stage = "login"
+                server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
+                stage = "send"
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=10) as server:
+                stage = "TLS"
+                server.starttls(context=ssl.create_default_context())
+                stage = "login"
+                server.login(st.secrets["SMTP_USERNAME"], st.secrets["SMTP_PASSWORD"])
+                stage = "send"
+                server.send_message(msg)
+    except Exception as exc:
+        raise EmailStageError(stage, exc) from exc
 
 
 def send_booking_email(db, recipient_name, start, end):
@@ -222,6 +238,10 @@ def send_booking_email(db, recipient_name, start, end):
 
 
 def smtp_issue(exc):
+    stage = exc.stage if isinstance(exc, EmailStageError) else None
+    if isinstance(exc, EmailStageError):
+        exc = exc.original
+    prefix = f"At {stage}: " if stage else ""
     if isinstance(exc, ValueError):
         return str(exc)
     if isinstance(exc, smtplib.SMTPAuthenticationError):
@@ -243,8 +263,8 @@ def smtp_issue(exc):
     if isinstance(exc, smtplib.SMTPResponseException):
         return f"The SMTP server returned code {exc.smtp_code}. Check the provider's SMTP settings."
     if isinstance(exc, OSError):
-        return f"SMTP network error (system code {exc.errno}). Check host, port and network access."
-    return "Email delivery failed. Check the SMTP settings."
+        return prefix + f"{type(exc).__name__}: {str(exc)[:180]}. Check the SMTP host, port and network access."
+    return prefix + f"{type(exc).__name__}. Check the SMTP settings."
 
 
 def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None):
