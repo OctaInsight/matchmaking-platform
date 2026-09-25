@@ -116,7 +116,10 @@ def auth_screen(db):
                         st.rerun()
                     st.success("Account created. Check your email to confirm it, then sign in.")
                 except Exception as exc:
-                    st.error(f"Account creation failed: {exc}")
+                    if "rate limit" in str(exc).lower() or "over_email_send_rate_limit" in str(exc).lower():
+                        st.info("Confirmation emails are temporarily limited by Supabase. Please try again later. The event organiser is setting up reliable email delivery.")
+                    else:
+                        st.error(f"Account creation failed: {exc}")
 
 
     st.markdown("**Confirmation email expired?**")
