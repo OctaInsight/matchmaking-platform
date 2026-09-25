@@ -69,7 +69,7 @@ def save_profile(db, uid):
             try:
                 db.table("profiles").insert({
                     "id": uid, "full_name": name.strip(),
-                    "organisation": organisation.strip(), "bio": bio.strip()
+                    "organisation": organisation.strip(), "biography": bio.strip()
                 }).execute()
                 st.rerun()
             except Exception as exc:
@@ -139,12 +139,13 @@ def publish(db, uid):
     st.subheader("Submit an abstract or innovation idea")
     with st.form("abstract"):
         title = st.text_input("Title", max_chars=200)
-        category = st.selectbox("Event", ["Project Brokerage", "Scale2Connect Matchmaking", "Other"])
+        thematic_area = st.text_input("Thematic area (optional)", max_chars=160)
+        summary = st.text_input("Short summary (optional)", max_chars=300)
         body = st.text_area("Abstract", height=180, max_chars=5000)
         keywords = st.text_input("Keywords", max_chars=300)
         poster = st.text_input("Public poster URL (image or PDF, optional)")
         video = st.text_input("Public YouTube video URL (optional)")
-        submitted = st.form_submit_button("Publish")
+        submitted = st.form_submit_button("Submit for approval")
     if submitted:
         if len(title.strip()) < 5 or len(body.strip()) < 30:
             st.error("Add a title of at least 5 characters and an abstract of at least 30 characters.")
@@ -152,23 +153,28 @@ def publish(db, uid):
             st.error("Use HTTPS URLs; the video must be on YouTube.")
         else:
             try:
-                db.table("abstracts").insert({
-                    "author_id": uid, "title": title.strip(), "category": category,
-                    "abstract_text": body.strip(), "keywords": keywords.strip(),
+                slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] + "-" + __import__("uuid").uuid4().hex[:8]
+                db.table("submissions").insert({
+                    "owner_id": uid, "title": title.strip(), "slug": slug,
+                    "abstract_text": body.strip(), "short_summary": summary.strip() or None,
+                    "thematic_area": thematic_area.strip() or None,
+                    "keywords": [word.strip() for word in keywords.split(",") if word.strip()],
                     "poster_url": poster.strip() or None, "video_url": video.strip() or None,
+                    "status": "submitted", "submitted_at": datetime.now(timezone.utc).isoformat(),
                 }).execute()
-                st.success("Your abstract is published.")
+                st.success("Your submission was sent for approval. It will appear publicly once approved.")
             except Exception as exc:
                 st.error(f"Could not publish: {exc}")
 
 
 def request_form(db, item, uid):
-    if item["author_id"] == uid:
+    if item["owner_id"] == uid:
         return
     with st.form(f"request_{item['id']}"):
         st.caption("Request a meeting with the author. Enter a date and time in UTC.")
         day = st.date_input("Date (UTC)", key=f"day_{item['id']}")
-        clock = st.time_input("Time (UTC)", key=f"time_{item['id']}")
+        clock = st.time_input("Start time (UTC)", key=f"time_{item['id']}")
+        duration = st.selectbox("Duration", [15, 30, 45, 60], index=1, key=f"duration_{item['id']}")
         message = st.text_area("Why would you like to meet?", max_chars=2000, key=f"msg_{item['id']}")
         submitted = st.form_submit_button("Send meeting request")
     if submitted:
@@ -179,10 +185,13 @@ def request_form(db, item, uid):
             st.error("Please add a short message.")
         else:
             try:
+                from datetime import timedelta
                 db.table("meeting_requests").insert({
-                    "abstract_id": item["id"], "requester_id": uid,
-                    "author_id": item["author_id"], "message": message.strip(),
-                    "proposed_at": when.isoformat(),
+                    "submission_id": item["id"], "requester_id": uid,
+                    "recipient_id": item["owner_id"], "purpose": message.strip(),
+                    "proposed_start": when.isoformat(),
+                    "proposed_end": (when + timedelta(minutes=duration)).isoformat(),
+                    "format": "online",
                 }).execute()
                 st.success("Meeting request sent.")
             except Exception as exc:
@@ -192,7 +201,7 @@ def request_form(db, item, uid):
 def browse(db, uid):
     st.subheader("Browse abstracts")
     try:
-        items = db.table("abstracts").select("*").eq("status", "published").order("created_at", desc=True).execute().data
+        items = db.table("submissions").select("*").eq("status", "approved").order("created_at", desc=True).execute().data
         people = db.table("profiles").select("id,full_name,organisation").execute().data
         names = {person["id"]: person for person in people}
     except Exception as exc:
@@ -200,17 +209,17 @@ def browse(db, uid):
         return
     query = st.text_input("Search titles, abstracts and keywords")
     items = [x for x in items if query.lower() in " ".join(
-        [x["title"], x["abstract_text"], x.get("keywords") or ""]
+        [x["title"], x["abstract_text"], " ".join(x.get("keywords") or [])]
     ).lower()]
     if not items:
-        st.info("No matching abstracts yet.")
+        st.info("No approved submissions yet. Newly submitted abstracts appear after approval.")
     for item in items:
-        author = names.get(item["author_id"], {})
-        with st.expander(item["title"] + " · " + item["category"]):
+        author = names.get(item["owner_id"], {})
+        with st.expander(item["title"] + " · " + (item.get("thematic_area") or "Innovation")):
             st.caption(f"By {author.get('full_name', 'Participant')} · {author.get('organisation', '')}")
             st.write(item["abstract_text"])
             if item.get("keywords"):
-                st.caption("Keywords: " + item["keywords"])
+                st.caption("Keywords: " + ", ".join(item["keywords"]))
             if item.get("poster_url"):
                 url = item["poster_url"]
                 st.link_button("Open poster", url)
@@ -220,10 +229,10 @@ def browse(db, uid):
                 st.video(item["video_url"])
             request_form(db, item, uid)
             st.markdown("**Feedback**")
-            comments = db.table("feedback").select("*").eq("abstract_id", item["id"]).order("created_at").execute().data
+            comments = db.table("comments").select("*").eq("submission_id", item["id"]).eq("status", "visible").order("created_at").execute().data
             for comment in comments:
-                who = names.get(comment["sender_id"], {}).get("full_name", "Participant")
-                st.write(f"**{who}:** {comment['comment']}")
+                who = names.get(comment["author_id"], {}).get("full_name", "Participant")
+                st.write(f"**{who}:** {comment['comment_text']}")
             with st.form(f"feedback_{item['id']}"):
                 comment = st.text_area("Leave feedback", max_chars=2000)
                 send = st.form_submit_button("Post feedback")
@@ -232,8 +241,8 @@ def browse(db, uid):
                     st.error("Enter a comment.")
                 else:
                     try:
-                        db.table("feedback").insert({
-                            "abstract_id": item["id"], "sender_id": uid, "comment": comment.strip()
+                        db.table("comments").insert({
+                            "submission_id": item["id"], "author_id": uid, "comment_text": comment.strip()
                         }).execute()
                         st.rerun()
                     except Exception as exc:
@@ -243,8 +252,8 @@ def browse(db, uid):
 def meetings(db, uid):
     st.subheader("Meeting requests")
     try:
-        rows = db.table("meeting_requests").select("*").order("proposed_at").execute().data
-        abstracts = db.table("abstracts").select("id,title").execute().data
+        rows = db.table("meeting_requests").select("*").order("proposed_start").execute().data
+        abstracts = db.table("submissions").select("id,title").execute().data
         titles = {a["id"]: a["title"] for a in abstracts}
     except Exception as exc:
         st.error(f"Could not load meetings: {exc}")
@@ -252,30 +261,34 @@ def meetings(db, uid):
     if not rows:
         st.info("There are no meeting requests yet.")
     for row in rows:
-        role = "Author" if row["author_id"] == uid else "Requester"
-        with st.expander(f"{titles.get(row['abstract_id'], 'Abstract')} · {row['status']} · {role}"):
-            st.write("Proposed (UTC):", row["proposed_at"])
-            st.write("Message:", row["message"])
-            if row.get("meeting_link") and row["status"] == "accepted":
-                st.link_button("Join online call", row["meeting_link"])
-            if row["author_id"] == uid and row["status"] == "pending":
-                link = st.text_input("Optional HTTPS call link (Zoom, Teams, Meet, etc.)", key=f"link_{row['id']}")
+        role = "Author" if row["recipient_id"] == uid else "Requester"
+        with st.expander(f"{titles.get(row['submission_id'], 'Submission')} · {row['status']} · {role}"):
+            st.write("Proposed start (UTC):", row["proposed_start"])
+            st.write("Proposed end (UTC):", row["proposed_end"])
+            st.write("Purpose:", row["purpose"])
+            if row.get("private_message"):
+                st.write("Private message:", row["private_message"])
+            if row["recipient_id"] == uid and row["status"] == "pending":
                 left, right = st.columns(2)
                 if left.button("Accept", key=f"accept_{row['id']}"):
-                    if not valid_url(link):
-                        st.error("Enter a valid HTTPS call link or leave it blank.")
-                    else:
-                        db.table("meeting_requests").update({
-                            "status": "accepted", "meeting_link": link.strip() or None
-                        }).eq("id", row["id"]).execute()
+                    try:
+                        db.table("meeting_requests").update({"status": "accepted"}).eq("id", row["id"]).execute()
                         st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not accept request: {exc}")
                 if right.button("Decline", key=f"decline_{row['id']}"):
-                    db.table("meeting_requests").update({"status": "declined"}).eq("id", row["id"]).execute()
-                    st.rerun()
+                    try:
+                        db.table("meeting_requests").update({"status": "declined"}).eq("id", row["id"]).execute()
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not decline request: {exc}")
             if row["requester_id"] == uid and row["status"] == "pending":
                 if st.button("Cancel request", key=f"cancel_{row['id']}"):
-                    db.table("meeting_requests").update({"status": "cancelled"}).eq("id", row["id"]).execute()
-                    st.rerun()
+                    try:
+                        db.table("meeting_requests").delete().eq("id", row["id"]).execute()
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not cancel request: {exc}")
 
 
 db = client()
