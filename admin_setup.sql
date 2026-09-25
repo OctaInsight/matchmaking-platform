@@ -1,6 +1,17 @@
 -- Run in the Supabase SQL Editor after reviewing the role assignment below.
 -- Uses the EXISTING profiles and submissions tables; does not recreate them.
 
+do $
+begin
+  if not exists (
+    select 1 from pg_type t join pg_enum e on e.enumtypid = t.oid
+    where t.typname = 'user_role' and e.enumlabel = 'admin'
+  ) then
+    raise exception 'user_role enum has no admin value; inspect its values before continuing';
+  end if;
+end;
+$;
+
 -- Prevent a signed-in user from elevating their own profile role via the Data API.
 create or replace function public.protect_profile_role()
 returns trigger language plpgsql set search_path = '' as $$
