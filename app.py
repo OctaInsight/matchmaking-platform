@@ -291,6 +291,49 @@ def meetings(db, uid):
                         st.error(f"Could not cancel request: {exc}")
 
 
+def admin_review(db):
+    st.subheader("Review submitted abstracts")
+    st.caption("Only approved submissions appear in public browsing.")
+    try:
+        items = db.rpc("admin_pending_submissions").execute().data or []
+    except Exception:
+        st.info("Admin review needs the database setup. Run admin_setup.sql in the Supabase SQL Editor.")
+        return
+    if not items:
+        st.success("No submissions are waiting for review.")
+        return
+    st.write(f"{len(items)} submission(s) awaiting review")
+    for item in items:
+        with st.expander(item["title"]):
+            st.caption(f"Submitted: {item.get('submitted_at') or item.get('created_at')}")
+            if item.get("thematic_area"):
+                st.write("Thematic area:", item["thematic_area"])
+            if item.get("short_summary"):
+                st.write("Summary:", item["short_summary"])
+            st.write(item["abstract_text"])
+            if item.get("keywords"):
+                st.write("Keywords:", ", ".join(item["keywords"]))
+            if item.get("poster_url"):
+                st.link_button("Open poster", item["poster_url"])
+            if item.get("video_url"):
+                st.link_button("Open video", item["video_url"])
+            approve, reject = st.columns(2)
+            decision = None
+            if approve.button("Approve", key=f"approve_{item['id']}"):
+                decision = "approved"
+            if reject.button("Reject", key=f"reject_{item['id']}"):
+                decision = "rejected"
+            if decision:
+                try:
+                    db.rpc("admin_review_submission", {
+                        "p_submission_id": item["id"], "p_decision": decision,
+                    }).execute()
+                    st.success(f"Submission {decision}.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not review submission: {exc}")
+
+
 db = client()
 uid = user_id(db)
 if not uid:
@@ -306,10 +349,20 @@ with st.sidebar:
         st.rerun()
 
 save_profile(db, uid)
-page = st.sidebar.radio("Navigate", ["Browse abstracts", "Submit an abstract", "My meetings"])
+try:
+    my_profile = db.table("profiles").select("role").eq("id", uid).single().execute().data
+    is_admin = my_profile.get("role") == "admin"
+except Exception:
+    is_admin = False
+pages = ["Browse abstracts", "Submit an abstract", "My meetings"]
+if is_admin:
+    pages.append("Admin review")
+page = st.sidebar.radio("Navigate", pages)
 if page == "Browse abstracts":
     browse(db, uid)
 elif page == "Submit an abstract":
     publish(db, uid)
-else:
+elif page == "My meetings":
     meetings(db, uid)
+else:
+    admin_review(db)
