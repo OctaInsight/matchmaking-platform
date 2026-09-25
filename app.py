@@ -64,7 +64,7 @@ def save_profile(db, uid):
         submitted = st.form_submit_button("Save profile")
     if submitted:
         if len(name.strip()) < 2:
-            st.error("Please enter your full name.")
+            st.info("Add your full name to continue.")
         else:
             try:
                 db.table("profiles").insert({
@@ -101,7 +101,7 @@ def auth_screen(db):
             submitted = st.form_submit_button("Create account")
         if submitted:
             if len(password) < 8:
-                st.error("Use at least 8 characters.")
+                st.info("Choose a password with at least 8 characters.")
             else:
                 try:
                     res = db.auth.sign_up({
@@ -123,7 +123,7 @@ def auth_screen(db):
     resend_email = st.text_input("Account email", key="resend_email")
     if st.button("Resend confirmation email"):
         if not resend_email.strip():
-            st.error("Enter your account email.")
+            st.info("Enter your account email above.")
         else:
             try:
                 db.auth.resend({
@@ -138,19 +138,19 @@ def auth_screen(db):
 def publish(db, uid):
     st.subheader("Submit an abstract or innovation idea")
     with st.form("abstract"):
-        title = st.text_input("Title", max_chars=200)
+        title = st.text_input("Title", max_chars=200, help="At least 5 characters.")
         thematic_area = st.text_input("Thematic area (optional)", max_chars=160)
         summary = st.text_input("Short summary (optional)", max_chars=300)
-        body = st.text_area("Abstract", height=180, max_chars=5000)
+        body = st.text_area("Abstract", height=180, max_chars=5000, help="At least 30 characters.")
         keywords = st.text_input("Keywords", max_chars=300)
         poster = st.text_input("Public poster URL (image or PDF, optional)")
         video = st.text_input("Public YouTube video URL (optional)")
         submitted = st.form_submit_button("Submit for approval")
     if submitted:
         if len(title.strip()) < 5 or len(body.strip()) < 30:
-            st.error("Add a title of at least 5 characters and an abstract of at least 30 characters.")
+            st.info("To submit, add a title of at least 5 characters and an abstract of at least 30 characters.")
         elif not valid_url(poster) or not valid_url(video, {"youtube.com", "www.youtube.com", "youtu.be", "www.youtu.be"}):
-            st.error("Use HTTPS URLs; the video must be on YouTube.")
+            st.info("Check the links: both need HTTPS, and the video link must be from YouTube.")
         else:
             try:
                 slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] + "-" + __import__("uuid").uuid4().hex[:8]
@@ -180,9 +180,9 @@ def request_form(db, item, uid):
     if submitted:
         when = datetime.combine(day, clock, tzinfo=timezone.utc)
         if when <= datetime.now(timezone.utc):
-            st.error("Choose a future time.")
+            st.info("Choose a future meeting time in UTC.")
         elif len(message.strip()) < 5:
-            st.error("Please add a short message.")
+            st.info("Add a short reason for the meeting (at least 5 characters).")
         else:
             try:
                 from datetime import timedelta
@@ -238,7 +238,7 @@ def browse(db, uid):
                 send = st.form_submit_button("Post feedback")
             if send:
                 if len(comment.strip()) < 2:
-                    st.error("Enter a comment.")
+                    st.info("Write a short comment before posting.")
                 else:
                     try:
                         db.table("comments").insert({
