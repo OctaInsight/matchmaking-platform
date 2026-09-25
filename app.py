@@ -242,6 +242,39 @@ def display_meeting_time(value, tz):
     return instant.astimezone(tz).strftime("%d %b %Y, %H:%M %Z (UTC%z)")
 
 
+def parse_meeting_time(value):
+    instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(timezone.utc)
+
+
+def calendar_invitation(row):
+    def escape(value):
+        return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+
+    def stamp(value):
+        return parse_meeting_time(value).strftime("%Y%m%dT%H%M%SZ")
+
+    url = "https://meet.jit.si/OctaMatchmaking" + row["id"].replace("-", "")
+    details = escape((row.get("purpose") or "") + "\nVideo call: " + url)
+    lines = [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//OctaInsight//Matchmaking//EN",
+        "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
+        "UID:" + row["id"] + "@octa-matchmaking.streamlit.app",
+        "DTSTAMP:" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+        "DTSTART:" + stamp(row["proposed_start"]),
+        "DTEND:" + stamp(row["proposed_end"]),
+        "SUMMARY:Octa Matchmaking meeting", "DESCRIPTION:" + details,
+        "URL:" + url,
+        "BEGIN:VALARM", "ACTION:DISPLAY",
+        "DESCRIPTION:Your Octa Matchmaking meeting starts in one hour",
+        "TRIGGER:-PT1H", "END:VALARM",
+        "END:VEVENT", "END:VCALENDAR",
+    ]
+    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+
+
 def send_booking_email(db, recipient_name, start, end):
     user = db.auth.get_user().user
     if not user or not user.email:
@@ -429,6 +462,8 @@ def meetings(db, uid):
             st.write("Proposed start:", display_meeting_time(row["proposed_start"], local_tz))
             st.write("Proposed end:", display_meeting_time(row["proposed_end"], local_tz))
             st.write("Purpose:", row["purpose"])
+            if row["status"] == "accepted":
+                st.download_button("Add to calendar (reminder 1 hour before)", calendar_invitation(row), file_name=f"octa-meeting-{row['id']}.ics", mime="text/calendar", key=f"calendar_{row['id']}")
             if row["status"] == "accepted" and row.get("format") == "online":
                 room = "OctaMatchmaking" + row["id"].replace("-", "")
                 call_url = "https://meet.jit.si/" + room
@@ -660,6 +695,15 @@ try:
     incoming = db.table("meeting_requests").select("id", count="exact").eq("recipient_id", uid).eq("status", "pending").execute()
     if incoming.count:
         st.sidebar.info(f"{incoming.count} incoming meeting request(s) in My meetings")
+    now_utc = datetime.now(timezone.utc)
+    upcoming = db.table("meeting_requests").select("id,proposed_start").eq("status", "accepted").gte(
+        "proposed_start", now_utc.isoformat()
+    ).lte("proposed_start", (now_utc + timedelta(hours=24)).isoformat()).order("proposed_start").execute().data or []
+    if upcoming:
+        st.sidebar.info(f"{len(upcoming)} meeting(s) in the next 24 hours")
+        for row in upcoming[:3]:
+            st.sidebar.caption(display_meeting_time(row["proposed_start"], viewer_timezone()))
+    st.sidebar.caption("For a reminder while the app is closed, add an accepted meeting to your calendar.")
 except Exception:
     pass
 
