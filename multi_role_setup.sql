@@ -144,6 +144,21 @@ begin
 end;
 $$;
 
+-- Keep the legacy profiles.role field from being changed by a signed-in user.
+create or replace function public.platform_guard_profile_role()
+returns trigger language plpgsql set search_path = '' as $$
+begin
+  if (select auth.uid()) is not null and new.role is distinct from old.role then
+    raise exception 'Profile role changes require database administration';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists protect_profile_role on public.profiles;
+drop trigger if exists platform_guard_profile_role on public.profiles;
+create trigger platform_guard_profile_role before update on public.profiles
+for each row execute function public.platform_guard_profile_role();
+
 -- A signed-in author cannot approve their own abstract or move it between events.
 create or replace function public.platform_guard_submission_update()
 returns trigger language plpgsql set search_path = '' as $$
