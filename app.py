@@ -1,4 +1,5 @@
 import re
+import json
 import uuid
 import smtplib
 import socket
@@ -10,10 +11,40 @@ from urllib.parse import urlparse
 
 import streamlit as st
 from supabase import create_client
+from streamlit_cookies_manager import EncryptedCookieManager
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project & Innovation Matchmaking")
 APP_URL = "https://octa-matchmaking.streamlit.app/"
+
+# A server-only secret encrypts the Supabase session stored in the browser.
+try:
+    cookie_password = st.secrets.get("COOKIE_PASSWORD")
+except FileNotFoundError:
+    cookie_password = None
+cookies = None
+if cookie_password:
+    cookies = EncryptedCookieManager(prefix="octa-matchmaking/auth/", password=cookie_password)
+    if not cookies.ready():
+        st.stop()
+
+
+def remember_tokens(tokens):
+    st.session_state.tokens = tokens
+    if cookies is not None:
+        encoded = json.dumps(tokens)
+        if cookies.get("session") != encoded:
+            cookies["session"] = encoded
+            cookies.save()
+
+
+def forget_tokens():
+    st.session_state.pop("tokens", None)
+    if cookies is not None and cookies.get("session") is not None:
+        del cookies["session"]
+        cookies.save()
+
+
 
 
 def client():
@@ -25,16 +56,24 @@ def client():
         st.stop()
     db = create_client(url, key)
     tokens = st.session_state.get("tokens")
+    if not tokens and cookies is not None:
+        try:
+            tokens = json.loads(cookies.get("session") or "null")
+            if tokens:
+                st.session_state.tokens = tokens
+        except (ValueError, TypeError):
+            forget_tokens()
+            tokens = None
     if tokens:
         try:
             response = db.auth.set_session(tokens["access_token"], tokens["refresh_token"])
             if response.session:
-                st.session_state.tokens = {
+                remember_tokens({
                     "access_token": response.session.access_token,
                     "refresh_token": response.session.refresh_token,
-                }
+                })
         except Exception:
-            st.session_state.pop("tokens", None)
+            forget_tokens()
             st.rerun()
     return db
 
@@ -45,7 +84,7 @@ def user_id(db):
     try:
         return db.auth.get_user().user.id
     except Exception:
-        st.session_state.pop("tokens", None)
+        forget_tokens()
         st.rerun()
 
 
@@ -93,10 +132,10 @@ def auth_screen(db):
         if submitted:
             try:
                 res = db.auth.sign_in_with_password({"email": email.strip(), "password": password})
-                st.session_state.tokens = {
+                remember_tokens({
                     "access_token": res.session.access_token,
                     "refresh_token": res.session.refresh_token,
-                }
+                })
                 st.rerun()
             except Exception as exc:
                 st.error(f"Sign in failed: {exc}")
@@ -115,10 +154,10 @@ def auth_screen(db):
                         "options": {"email_redirect_to": APP_URL},
                     })
                     if res.session:
-                        st.session_state.tokens = {
+                        remember_tokens({
                             "access_token": res.session.access_token,
                             "refresh_token": res.session.refresh_token,
-                        }
+                        })
                         st.rerun()
                     st.success("Account created. Check your email to confirm it, then sign in.")
                 except Exception as exc:
@@ -654,9 +693,11 @@ if not uid:
 with st.sidebar:
     st.write("Signed in")
     if st.button("Sign out"):
-        db.auth.sign_out()
-        st.session_state.pop("tokens", None)
-        st.rerun()
+        try:
+            db.auth.sign_out()
+        finally:
+            forget_tokens()
+            st.rerun()
 
 save_profile(db, uid)
 try:
