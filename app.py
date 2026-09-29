@@ -840,10 +840,14 @@ def admin_content(db, events):
     if not secret_key:
         st.info("To enable these admin tools, add SUPABASE_SECRET_KEY (or the legacy SUPABASE_SERVICE_ROLE_KEY) to Streamlit App settings → Secrets. Keep the key private.")
         return
-    admin = create_client(
-        st.secrets["SUPABASE_URL"], secret_key,
-        options=ClientOptions(auto_refresh_token=False, persist_session=False),
-    )
+    try:
+        admin = create_client(
+            st.secrets["SUPABASE_URL"], secret_key,
+            options=ClientOptions(auto_refresh_token=False, persist_session=False),
+        )
+    except Exception:
+        st.error("The Supabase admin key could not be used. Check the server-side Streamlit Secret.")
+        return
     with st.expander("Create a participant account"):
         st.caption("Set a temporary password and share it with the participant through a private channel. The app does not email or display it again.")
         with st.form("admin_create_participant", clear_on_submit=True):
