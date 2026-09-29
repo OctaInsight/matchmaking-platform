@@ -24,9 +24,9 @@ except FileNotFoundError:
     cookie_password = None
 cookies = None
 if cookie_password:
-    cookies = EncryptedCookieManager(prefix="octa-matchmaking/auth/", password=cookie_password)
-    if not cookies.ready():
-        st.stop()
+    manager = EncryptedCookieManager(prefix="octa-matchmaking/auth/", password=cookie_password)
+    if manager.ready():
+        cookies = manager
 
 
 def remember_tokens(tokens):
