@@ -41,6 +41,22 @@ def recovery_tokens_from_url(value):
     except (TypeError, ValueError):
         return None
 
+
+def recovery_hash_from_email_link(value, supabase_url):
+    """Extract a recovery token hash from Supabase's default email link."""
+    try:
+        parsed = urlparse(value)
+        expected = urlparse(supabase_url)
+        if parsed.scheme != "https" or parsed.netloc != expected.netloc or parsed.path != "/auth/v1/verify":
+            return None
+        fields = parse_qs(parsed.query)
+        if fields.get("type") != ["recovery"]:
+            return None
+        token_hash = fields.get("token", [""])[0]
+        return token_hash if 8 <= len(token_hash) <= 512 else None
+    except (TypeError, ValueError):
+        return None
+
 def sidebar_footer():
     st.sidebar.divider()
     st.sidebar.markdown(
@@ -210,17 +226,29 @@ def auth_screen(db):
                     else:
                         st.error("Could not request a reset link right now. Please try again later.")
         with st.expander("Reset link opened the home page?"):
-            st.write("Copy the complete URL from your browser address bar after opening the email link, then paste it here. The URL contains a private recovery token; do not share it with anyone.")
+            st.write("Request a fresh email. Before opening its reset link, right-click the link (or long-press on a phone) and choose Copy link address. Paste that link and your account email here. Do not share the link.")
             with st.form("paste_recovery_link"):
-                callback_url = st.text_input("Complete URL from address bar", type="password")
+                link_email = st.text_input("Account email", max_chars=254, key="link_email")
+                email_link = st.text_input("Reset link copied from email", type="password")
                 use_link = st.form_submit_button("Continue to new password")
             if use_link:
-                tokens = recovery_tokens_from_url(callback_url.strip())
-                if tokens:
-                    st.session_state.recovery_tokens = tokens
-                    st.rerun()
+                token_hash = recovery_hash_from_email_link(email_link.strip(), st.secrets["SUPABASE_URL"])
+                if token_hash and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", link_email.strip()):
+                    try:
+                        response = db.auth.verify_otp({
+                            "email": link_email.strip(), "token_hash": token_hash, "type": "recovery",
+                        })
+                        if not response.session:
+                            raise ValueError("Recovery session was not created")
+                        st.session_state.recovery_tokens = {
+                            "access_token": response.session.access_token,
+                            "refresh_token": response.session.refresh_token,
+                        }
+                        st.rerun()
+                    except Exception:
+                        st.info("This link has expired or was already used. Request a new reset email and copy its link before opening it.")
                 else:
-                    st.info("This is not a valid recovery URL. Open a new reset email and copy the complete browser address, including the part after #.")
+                    st.info("Enter your account email and the original reset link copied from the email.")
 
 
     st.markdown("**Confirmation email expired?**")
