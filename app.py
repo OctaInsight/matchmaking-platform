@@ -14,10 +14,6 @@ from supabase import create_client
 from streamlit_cookies_manager import EncryptedCookieManager
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
-st.markdown("""<style>
-.stApp {background-color: #eaf3ff; color: #183153;}
-section[data-testid="stSidebar"] {background-color: #d9eaff;}
-</style>""", unsafe_allow_html=True)
 st.title("Project / Poster / Abstract Matchmaking")
 APP_URL = "https://octa-matchmaking.streamlit.app/"
 
