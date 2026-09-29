@@ -122,7 +122,8 @@ def save_profile(db, uid):
 
 
 def auth_screen(db):
-    sign_in, sign_up = st.tabs(["Sign in", "Create account"])
+    st.caption("Your email address is your sign-in name.")
+    sign_in, sign_up, recover = st.tabs(["Sign in", "Create account", "Forgot password"])
     with sign_in:
         with st.form("login"):
             email = st.text_input("Email", key="login_email")
@@ -164,6 +165,26 @@ def auth_screen(db):
                         st.info("Confirmation emails are temporarily limited by Supabase. Please try again later. The event organiser is setting up reliable email delivery.")
                     else:
                         st.error(f"Account creation failed: {exc}")
+    with recover:
+        st.write("Enter your account email to request a password reset link.")
+        with st.form("request_password_reset"):
+            reset_email = st.text_input("Email address", max_chars=254)
+            request_reset = st.form_submit_button("Send reset link")
+        if request_reset:
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reset_email.strip()):
+                st.info("Enter a valid email address.")
+            else:
+                try:
+                    db.auth.reset_password_for_email(
+                        reset_email.strip(),
+                        {"redirect_to": APP_URL},
+                    )
+                    st.success("If this email has an account, a reset link has been sent. Check your inbox and spam folder.")
+                except Exception as exc:
+                    if "rate limit" in str(exc).lower():
+                        st.info("Reset emails are temporarily limited. Please try again later.")
+                    else:
+                        st.error("Could not request a reset link right now. Please try again later.")
 
 
     st.markdown("**Confirmation email expired?**")
@@ -180,6 +201,68 @@ def auth_screen(db):
                 st.success("If confirmation is still needed, check your inbox for a new email.")
             except Exception as exc:
                 st.error(f"Could not resend confirmation: {exc}")
+
+
+def password_recovery_screen(db):
+    st.subheader("Reset your password")
+    token_hash = st.query_params.get("recovery_token")
+    if not st.session_state.get("recovery_tokens"):
+        st.caption("Enter the email address that received the reset link.")
+        with st.form("verify_recovery"):
+            email = st.text_input("Account email", max_chars=254)
+            verify = st.form_submit_button("Continue")
+        if verify:
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email.strip()):
+                st.info("Enter a valid email address.")
+                return
+            try:
+                response = db.auth.verify_otp({
+                    "email": email.strip(), "token_hash": token_hash, "type": "recovery",
+                })
+                if not response.session:
+                    raise ValueError("Recovery session was not created")
+                st.session_state.recovery_tokens = {
+                    "access_token": response.session.access_token,
+                    "refresh_token": response.session.refresh_token,
+                }
+                del st.query_params["recovery_token"]
+                st.rerun()
+            except Exception:
+                st.info("This reset link is invalid or expired. Request a new link from Forgot password.")
+        if st.button("Request a new link"):
+            if token_hash:
+                del st.query_params["recovery_token"]
+            st.session_state.public_page = "Sign in or create account"
+            st.rerun()
+        return
+    with st.form("set_new_password"):
+        password = st.text_input("New password (at least 8 characters)", type="password")
+        again = st.text_input("Confirm new password", type="password")
+        change = st.form_submit_button("Set new password")
+    if change:
+        if len(password) < 8 or password != again:
+            st.info("Use at least 8 characters and enter the same password twice.")
+            return
+        try:
+            tokens = st.session_state.recovery_tokens
+            session = db.auth.set_session(tokens["access_token"], tokens["refresh_token"])
+            if session.session:
+                st.session_state.recovery_tokens = {
+                    "access_token": session.session.access_token,
+                    "refresh_token": session.session.refresh_token,
+                }
+            db.auth.update_user({"password": password})
+            try:
+                db.auth.sign_out()
+            except Exception:
+                pass
+            st.session_state.pop("recovery_tokens", None)
+            forget_tokens()
+            st.session_state.reset_done = True
+            st.session_state.public_page = "Sign in or create account"
+            st.rerun()
+        except Exception:
+            st.error("Could not change the password. Request a fresh reset link and try again.")
 
 
 def publish(db, uid, events):
@@ -794,6 +877,11 @@ def available_events(db):
 
 
 db = client()
+if st.query_params.get("recovery_token") or st.session_state.get("recovery_tokens"):
+    with st.sidebar:
+        sidebar_footer()
+    password_recovery_screen(db)
+    st.stop()
 uid = user_id(db)
 try:
     events = available_events(db)
@@ -802,8 +890,10 @@ except Exception as exc:
     st.stop()
 if not uid:
     with st.sidebar:
-        public_page = st.radio("Navigate", ["Browse", "Sign in or create account"])
+        public_page = st.radio("Navigate", ["Browse", "Sign in or create account"], key="public_page")
         sidebar_footer()
+    if st.session_state.pop("reset_done", False):
+        st.success("Password changed. Sign in with your new password.")
     if public_page == "Browse":
         browse(db, None, events)
     else:
