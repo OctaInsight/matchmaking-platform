@@ -15,6 +15,7 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 from supabase import create_client
+from supabase.lib.client_options import ClientOptions
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
@@ -829,8 +830,120 @@ def review_event(db, event):
                     st.error(f"Could not review submission: {exc}")
 
 
+def admin_content(db, events):
+    st.markdown("**Create participants and submissions**")
+    # Check the signed-in account before constructing any privileged client.
+    if not db.rpc("platform_is_super_admin").execute().data:
+        st.error("Super admin access required.")
+        return
+    secret_key = st.secrets.get("SUPABASE_SECRET_KEY") or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not secret_key:
+        st.info("To enable these admin tools, add SUPABASE_SECRET_KEY (or the legacy SUPABASE_SERVICE_ROLE_KEY) to Streamlit App settings → Secrets. Keep the key private.")
+        return
+    admin = create_client(
+        st.secrets["SUPABASE_URL"], secret_key,
+        options=ClientOptions(auto_refresh_token=False, persist_session=False),
+    )
+    with st.expander("Create a participant account"):
+        st.caption("Set a temporary password and share it with the participant through a private channel. The app does not email or display it again.")
+        with st.form("admin_create_participant", clear_on_submit=True):
+            name = st.text_input("Participant name", max_chars=120)
+            email = st.text_input("Participant email", max_chars=254)
+            organisation = st.text_input("Organisation", max_chars=160)
+            password = st.text_input("Temporary password (at least 8 characters)", type="password")
+            confirm = st.text_input("Confirm temporary password", type="password")
+            verified = st.checkbox("I verified that this email belongs to the participant")
+            create = st.form_submit_button("Create participant")
+        if create:
+            if len(name.strip()) < 2 or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email.strip()):
+                st.info("Enter the participant's name and a valid email address.")
+            elif len(password) < 8 or password != confirm:
+                st.info("Enter matching passwords of at least 8 characters.")
+            elif not verified:
+                st.info("Verify the participant's email address before creating a confirmed account.")
+            else:
+                try:
+                    response = admin.auth.admin.create_user({
+                        "email": email.strip().lower(), "password": password,
+                        "email_confirm": True, "user_metadata": {"full_name": name.strip()},
+                    })
+                    if not response.user:
+                        raise ValueError("Supabase did not return a new user")
+                except Exception as exc:
+                    st.error(f"Could not create account: {exc}")
+                else:
+                    try:
+                        uid = response.user.id
+                        admin.table("profiles").upsert({
+                            "id": uid, "full_name": name.strip(),
+                            "organisation": organisation.strip(),
+                        }, on_conflict="id").execute()
+                        admin.table("platform_user_types").upsert({
+                            "user_id": uid, "user_type": "project_owner",
+                        }, on_conflict="user_id").execute()
+                        st.success(f"Account created for {email.strip()}. They can sign in with the temporary password. Select them in Add a submission below.")
+                    except Exception as exc:
+                        st.error(f"Account was created for {email.strip()}, but its profile could not be saved: {exc}. Do not create the account again.")
+
+    with st.expander("Add an abstract, poster and video for a participant"):
+        try:
+            people = admin.table("profiles").select("id,full_name,organisation").order("full_name").execute().data or []
+        except Exception as exc:
+            st.error(f"Could not load participants: {exc}")
+            return
+        if not people or not events:
+            st.info("Create a participant and an event first.")
+            return
+        labels = {
+            p["id"]: f"{p.get('full_name') or 'Participant'} · {p.get('organisation') or 'No organisation'} · {p['id'][:8]}"
+            for p in people
+        }
+        with st.form("admin_add_submission", clear_on_submit=True):
+            owner_id = st.selectbox("Author account", list(labels), format_func=lambda uid: labels[uid])
+            event = st.selectbox("Event", events, format_func=lambda e: e["title"])
+            category = st.selectbox("Category", ["Project idea", "Oral presentation", "Poster"])
+            title = st.text_input("Title", max_chars=200)
+            thematic_area = st.text_input("Thematic area (optional)", max_chars=160)
+            summary = st.text_input("Short summary (optional)", max_chars=300)
+            body = st.text_area("Full abstract", height=180, max_chars=5000)
+            keywords = st.text_input("Keywords (comma-separated)", max_chars=300)
+            support_request = st.text_area("Technical help, investment or collaboration sought (optional)", max_chars=2000)
+            st.caption("Paste public HTTPS links: host the poster PDF/image on Google Drive or similar, and the video on YouTube or another open platform.")
+            poster = st.text_input("Public poster URL (optional)")
+            video = st.text_input("Public video URL (optional)")
+            publish_now = st.checkbox("Publish immediately", value=True)
+            add = st.form_submit_button("Add submission")
+        if add:
+            if len(title.strip()) < 5 or len(body.strip()) < 30:
+                st.info("Add a title of at least 5 characters and an abstract of at least 30 characters.")
+            elif not valid_url(poster) or not valid_url(video):
+                st.info("Poster and video links must be public HTTPS addresses.")
+            else:
+                try:
+                    reviewer_id = db.auth.get_user().user.id
+                    now = datetime.now(timezone.utc).isoformat()
+                    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] + "-" + uuid.uuid4().hex[:8]
+                    status = "approved" if publish_now else "submitted"
+                    admin.table("submissions").insert({
+                        "owner_id": owner_id, "event_id": event["id"], "title": title.strip(), "slug": slug,
+                        "abstract_text": body.strip(), "short_summary": summary.strip() or None,
+                        "thematic_area": thematic_area.strip() or None,
+                        "keywords": [word.strip() for word in keywords.split(",") if word.strip()],
+                        "poster_url": poster.strip() or None, "video_url": video.strip() or None,
+                        "presentation_category": category.lower().replace(" ", "_"),
+                        "support_request": support_request.strip() or None,
+                        "status": status, "submitted_at": now,
+                        "approved_by": reviewer_id if publish_now else None,
+                        "approved_at": now if publish_now else None,
+                    }).execute()
+                    st.success("Submission published." if publish_now else "Submission added to the review queue.")
+                except Exception as exc:
+                    st.error(f"Could not add submission: {exc}")
+
+
 def super_dashboard(db, events):
     st.subheader("Super admin dashboard")
+    admin_content(db, events)
     st.markdown("**Test the Jitsi video call**")
     if "demo_jitsi_room" not in st.session_state:
         st.session_state.demo_jitsi_room = "OctaMatchmakingDemo" + uuid.uuid4().hex
