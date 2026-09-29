@@ -1,5 +1,4 @@
 <h2>Reset your matchmaking password</h2>
-<p>Open the matchmaking app, select Sign in or create account, then Forgot password. Enter this one-time code with your email address:</p>
-<p><strong style="font-size:24px;letter-spacing:4px">{{ .Token }}</strong></p>
-<p><a href="https://octa-matchmaking.streamlit.app/">Open the matchmaking app</a></p>
+<p>Use this one-time link to set a new password:</p>
+<p><a href="{{ .RedirectTo }}?recovery_token={{ .TokenHash }}">Reset password</a></p>
 <p>If you did not request this, you can ignore this email.</p>
