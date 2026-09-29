@@ -630,8 +630,11 @@ def review_event(db, event):
         st.info("No projects, posters or abstracts are awaiting review for this event.")
     for item in items:
         with st.expander(item["title"]):
+            st.caption("Category: " + (item.get("presentation_category") or "project_idea").replace("_", " ").title())
             st.caption(f"Submitted: {item.get('submitted_at') or item.get('created_at')}")
             st.write(item["abstract_text"])
+            if item.get("support_request"):
+                st.write("Help or investment sought:", item["support_request"])
             if item.get("short_summary"):
                 st.write("Summary:", item["short_summary"])
             if item.get("thematic_area"):
