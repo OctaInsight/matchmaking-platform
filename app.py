@@ -14,7 +14,11 @@ from supabase import create_client
 from streamlit_cookies_manager import EncryptedCookieManager
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
-st.title("Project & Innovation Matchmaking")
+st.markdown("""<style>
+.stApp {background-color: #eaf3ff; color: #183153;}
+section[data-testid="stSidebar"] {background-color: #d9eaff;}
+</style>""", unsafe_allow_html=True)
+st.title("Project / Poster / Abstract Matchmaking")
 APP_URL = "https://octa-matchmaking.streamlit.app/"
 
 # A server-only secret encrypts the Supabase session stored in the browser.
@@ -95,6 +99,19 @@ def valid_url(value, hosts=None):
     return p.scheme == "https" and bool(p.netloc) and (
         hosts is None or p.hostname in hosts
     )
+
+
+def poster_thumbnail(url):
+    if not url:
+        return None
+    if re.search(r"\.(png|jpe?g|webp)(\?.*)?$", url, re.I):
+        return url
+    parsed = urlparse(url)
+    if parsed.hostname in ("drive.google.com", "www.drive.google.com"):
+        match = re.search(r"/file/d/([A-Za-z0-9_-]+)", parsed.path)
+        if match:
+            return "https://drive.google.com/thumbnail?id=" + match.group(1) + "&sz=w400"
+    return None
 
 
 def save_profile(db, uid):
@@ -184,26 +201,29 @@ def auth_screen(db):
 
 
 def publish(db, uid, events):
-    st.subheader("Submit an abstract or innovation idea")
+    st.subheader("Submit a project idea, oral presentation or poster")
     with st.form("abstract"):
         event_titles = {e["title"]: e["id"] for e in events if e.get("is_active")}
         if not event_titles:
             st.info("No event is open for submissions yet.")
             st.stop()
         event_title = st.selectbox("Event", list(event_titles))
+        category = st.selectbox("Category", ["Project idea", "Oral presentation", "Poster"])
         title = st.text_input("Title", max_chars=200, help="At least 5 characters.")
         thematic_area = st.text_input("Thematic area (optional)", max_chars=160)
         summary = st.text_input("Short summary (optional)", max_chars=300)
         body = st.text_area("Abstract", height=180, max_chars=5000, help="At least 30 characters.")
         keywords = st.text_input("Keywords", max_chars=300)
+        support_request = st.text_area("Technical help, investment or collaboration sought (optional)", max_chars=2000)
+        st.caption("Upload your poster to Google Drive or a similar service and make the link public. Upload your two-minute video to YouTube or another open platform. Paste the links here; check each in a private browser window.")
         poster = st.text_input("Public poster URL (image or PDF, optional)")
-        video = st.text_input("Public YouTube video URL (optional)")
+        video = st.text_input("Public two-minute video URL (optional)")
         submitted = st.form_submit_button("Submit for approval")
     if submitted:
         if len(title.strip()) < 5 or len(body.strip()) < 30:
             st.info("To submit, add a title of at least 5 characters and an abstract of at least 30 characters.")
-        elif not valid_url(poster) or not valid_url(video, {"youtube.com", "www.youtube.com", "youtu.be", "www.youtu.be"}):
-            st.info("Check the links: both need HTTPS, and the video link must be from YouTube.")
+        elif not valid_url(poster) or not valid_url(video):
+            st.info("Check the poster and video links: both need public HTTPS addresses.")
         else:
             try:
                 slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:70] + "-" + __import__("uuid").uuid4().hex[:8]
@@ -214,6 +234,8 @@ def publish(db, uid, events):
                     "thematic_area": thematic_area.strip() or None,
                     "keywords": [word.strip() for word in keywords.split(",") if word.strip()],
                     "poster_url": poster.strip() or None, "video_url": video.strip() or None,
+                    "presentation_category": category.lower().replace(" ", "_"),
+                    "support_request": support_request.strip() or None,
                     "status": "submitted", "submitted_at": datetime.now(timezone.utc).isoformat(),
                 }).execute()
                 st.success("Your submission was sent for approval. It will appear publicly once approved.")
@@ -404,59 +426,123 @@ def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None)
 
 
 def browse(db, uid, events):
-    st.subheader("Browse abstracts")
-    event_titles = {e["title"]: e["id"] for e in events}
-    if not event_titles:
-        st.info("There are no events yet.")
-        return
+    st.subheader("Explore projects, posters and abstracts")
+    category = st.selectbox("Category", ["All", "Project idea", "Oral presentation", "Poster"])
+    query = st.text_input("Search title, author, user, keyword or abstract")
+    event_titles = {"All events": None, **{e["title"]: e["id"] for e in events}}
     selected_event = st.selectbox("Event", list(event_titles), key="browse_event")
     try:
-        items = db.table("submissions").select("*").eq("event_id", event_titles[selected_event]).eq("status", "approved").order("created_at", desc=True).execute().data
-        people = db.table("profiles").select("id,full_name,organisation").execute().data
-        names = {person["id"]: person for person in people}
+        items = db.rpc("platform_public_gallery").execute().data or []
     except Exception as exc:
-        st.error(f"Could not load abstracts: {exc}")
+        st.error(f"Could not load the public gallery. Apply public_gallery_setup.sql in Supabase. Details: {exc}")
         return
-    query = st.text_input("Search titles, abstracts and keywords")
-    items = [x for x in items if query.lower() in " ".join(
-        [x["title"], x["abstract_text"], " ".join(x.get("keywords") or [])]
-    ).lower()]
+    wanted = category.lower().replace(" ", "_")
+    items = [x for x in items if
+             (category == "All" or x["presentation_category"] == wanted) and
+             (selected_event == "All events" or x["event_id"] == event_titles[selected_event]) and
+             query.casefold() in " ".join([
+                 x.get("title") or "", x.get("abstract_text") or "",
+                 x.get("author_name") or "", x.get("organisation") or "",
+                 " ".join(x.get("keywords") or []),
+             ]).casefold()]
     if not items:
-        st.info("No approved submissions yet. Newly submitted abstracts appear after approval.")
-    for item in items:
-        author = names.get(item["owner_id"], {})
-        with st.expander(item["title"] + " · " + (item.get("thematic_area") or "Innovation")):
-            st.caption(f"By {author.get('full_name', 'Participant')} · {author.get('organisation', '')}")
-            st.write(item["abstract_text"])
-            if item.get("keywords"):
-                st.caption("Keywords: " + ", ".join(item["keywords"]))
-            if item.get("poster_url"):
-                url = item["poster_url"]
-                st.link_button("Open poster", url)
-                if re.search(r"\.(png|jpe?g|webp)(\?.*)?$", url, re.I):
-                    st.image(url)
-            if item.get("video_url"):
-                st.video(item["video_url"])
-            meeting_form(db, uid, item["owner_id"], author.get("full_name") or "the author", item["id"], item["id"])
-            st.markdown("**Feedback**")
-            comments = db.table("comments").select("*").eq("submission_id", item["id"]).eq("status", "visible").order("created_at").execute().data
-            for comment in comments:
-                who = names.get(comment["author_id"], {}).get("full_name", "Participant")
-                st.write(f"**{who}:** {comment['comment_text']}")
-            with st.form(f"feedback_{item['id']}"):
-                comment = st.text_area("Leave feedback", max_chars=2000)
-                send = st.form_submit_button("Post feedback")
-            if send:
-                if len(comment.strip()) < 2:
-                    st.info("Write a short comment before posting.")
+        st.info("No matching approved submissions yet.")
+        return
+    st.caption(f"{len(items)} result(s). Select a card for details.")
+    columns = st.columns(3)
+    for index, item in enumerate(items):
+        with columns[index % 3]:
+            with st.container(border=True):
+                poster = item.get("poster_url")
+                thumb = poster_thumbnail(poster)
+                if thumb:
+                    st.image(thumb, use_container_width=True)
+                else:
+                    st.markdown("### 🖼️" if poster else "### 📄")
+                st.markdown("**" + item["title"] + "**")
+                st.caption(item["presentation_category"].replace("_", " ").title() +
+                           " · " + (item.get("author_name") or "Author"))
+                if st.button("Open", key="open_" + item["id"]):
+                    st.session_state.selected_submission = item["id"]
+    item = next((x for x in items if x["id"] == st.session_state.get("selected_submission")), None)
+    if item is None:
+        return
+    st.divider()
+    st.subheader(item["title"])
+    st.caption(item["presentation_category"].replace("_", " ").title() +
+               " · " + (item.get("author_name") or "Author") +
+               " · " + (item.get("organisation") or ""))
+    st.write(item["abstract_text"])
+    if item.get("support_request"):
+        st.write("Help or investment sought:", item["support_request"])
+    if item.get("keywords"):
+        st.caption("Keywords: " + ", ".join(item["keywords"]))
+    if item.get("poster_url"):
+        st.link_button("Open public poster", item["poster_url"])
+        thumb = poster_thumbnail(item["poster_url"])
+        if thumb:
+            st.image(thumb)
+    if item.get("video_url"):
+        try:
+            st.video(item["video_url"])
+        except Exception:
+            st.link_button("Open public video", item["video_url"])
+    if uid:
+        meeting_form(db, uid, item["owner_id"], item.get("author_name") or "the author", item["id"], item["id"])
+    else:
+        st.caption("Sign in to request or accept a meeting.")
+    st.markdown("**Comments**")
+    try:
+        comments = db.rpc("platform_public_comments", {"p_submission_id": item["id"]}).execute().data or []
+    except Exception as exc:
+        st.error(f"Could not load comments: {exc}")
+        return
+    for comment in comments:
+        prefix = "↳ " if comment.get("parent_key") else ""
+        st.write(f"{prefix}**{comment['display_name']}:** {comment['comment_text']}")
+        if uid == item["owner_id"] and not comment.get("parent_key"):
+            with st.form("reply_" + comment["comment_key"]):
+                reply = st.text_area("Reply as the author", max_chars=2000)
+                send_reply = st.form_submit_button("Reply")
+            if send_reply:
+                if len(reply.strip()) < 2:
+                    st.info("Write a short reply.")
                 else:
                     try:
-                        db.table("comments").insert({
-                            "submission_id": item["id"], "author_id": uid, "comment_text": comment.strip()
+                        db.rpc("platform_author_reply", {
+                            "p_submission_id": item["id"],
+                            "p_parent_key": comment["comment_key"],
+                            "p_reply": reply.strip(),
                         }).execute()
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"Could not post feedback: {exc}")
+                        st.error(f"Could not post reply: {exc}")
+    with st.form("feedback_" + item["id"]):
+        if not uid:
+            guest_name = st.text_input("Your name", max_chars=120)
+            guest_email = st.text_input("Your email (private)", max_chars=254)
+        comment_text = st.text_area("Leave a comment", max_chars=2000)
+        send = st.form_submit_button("Post comment")
+    if send:
+        if len(comment_text.strip()) < 2:
+            st.info("Write a short comment before posting.")
+        else:
+            try:
+                if uid:
+                    db.table("comments").insert({
+                        "submission_id": item["id"], "author_id": uid,
+                        "comment_text": comment_text.strip(),
+                    }).execute()
+                    st.success("Comment posted.")
+                else:
+                    db.rpc("platform_guest_comment", {
+                        "p_submission_id": item["id"], "p_name": guest_name.strip(),
+                        "p_email": guest_email.strip(), "p_comment": comment_text.strip(),
+                    }).execute()
+                    st.success("Comment received. It will appear after review.")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not post comment: {exc}")
 
 
 def directory(db, uid):
@@ -541,7 +627,7 @@ def review_event(db, event):
         st.error(f"Could not load review queue: {exc}")
         return
     if not items:
-        st.info("No abstracts are awaiting review for this event.")
+        st.info("No projects, posters or abstracts are awaiting review for this event.")
     for item in items:
         with st.expander(item["title"]):
             st.caption(f"Submitted: {item.get('submitted_at') or item.get('created_at')}")
@@ -570,6 +656,28 @@ def review_event(db, event):
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Could not review submission: {exc}")
+
+
+def guest_review(db, event):
+    st.markdown("**Guest comments awaiting review**")
+    try:
+        rows = db.rpc("platform_guest_comment_queue", {"p_event_id": event["id"]}).execute().data or []
+    except Exception as exc:
+        st.error(f"Could not load guest comments: {exc}")
+        return
+    for row in rows:
+        st.write(f"**{row['submission_title']}** — {row['guest_name']}: {row['comment_text']}")
+        approve, reject = st.columns(2)
+        decision = "approved" if approve.button("Show comment", key="guest_yes_" + row["id"]) else (
+            "rejected" if reject.button("Reject comment", key="guest_no_" + row["id"]) else None)
+        if decision:
+            try:
+                db.rpc("platform_review_guest_comment", {
+                    "p_comment_id": row["id"], "p_decision": decision,
+                }).execute()
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not review comment: {exc}")
 
 
 def super_dashboard(db, events):
@@ -617,7 +725,7 @@ def super_dashboard(db, events):
     try:
         older = db.rpc("platform_unassigned_submissions").execute().data or []
         if older:
-            st.markdown("**Abstracts submitted before events were created**")
+            st.markdown("**Submissions made before events were created**")
             for old in older:
                 left, right = st.columns([4, 1])
                 left.write(old["title"])
@@ -627,7 +735,7 @@ def super_dashboard(db, events):
                     }).execute()
                     st.rerun()
     except Exception as exc:
-        st.error(f"Could not load older abstracts: {exc}")
+        st.error(f"Could not load older submissions: {exc}")
     with st.form("grant_admin"):
         email = st.text_input("Registered user's email")
         grant = st.form_submit_button("Give event sub-admin rights")
@@ -653,6 +761,7 @@ def super_dashboard(db, events):
     except Exception as exc:
         st.error(f"Could not load event admins: {exc}")
     review_event(db, event)
+    guest_review(db, event)
 
 
 def participant_type(db, uid):
@@ -685,9 +794,19 @@ def available_events(db):
 
 db = client()
 uid = user_id(db)
+try:
+    events = available_events(db)
+except Exception as exc:
+    st.error(f"Could not load events: {exc}")
+    st.stop()
 if not uid:
-    st.write("Discover projects and innovation ideas, connect with authors, and arrange meetings.")
-    auth_screen(db)
+    browse(db, None, events)
+    with st.sidebar:
+        st.caption("Sign in to request meetings or reply as an author.")
+        if st.button("Sign in or create account"):
+            st.session_state.show_auth = True
+    if st.session_state.get("show_auth"):
+        auth_screen(db)
     st.stop()
 
 with st.sidebar:
@@ -702,7 +821,6 @@ with st.sidebar:
 save_profile(db, uid)
 try:
     is_super = bool(db.rpc("platform_is_super_admin").execute().data)
-    events = available_events(db)
     kind = participant_type(db, uid)
 except Exception as exc:
     st.info("The event and user-role database setup is not active yet. Run multi_role_setup.sql in Supabase.")
@@ -748,18 +866,18 @@ try:
 except Exception:
     pass
 
-pages = ["Browse abstracts", "Meet participants", "My meetings"]
+pages = ["Browse projects / posters / abstracts", "Meet participants", "My meetings"]
 if kind == "project_owner" and not is_super:
-    pages.insert(1, "Submit an abstract")
+    pages.insert(1, "Submit project / poster / abstract")
 if is_super:
     pages.append("Super admin")
 elif admin_events:
     pages.append("Event admin")
 st.sidebar.caption("Super admin" if is_super else kind.replace("_", " ").title())
 page = st.sidebar.radio("Navigate", pages)
-if page == "Browse abstracts":
+if page == "Browse projects / posters / abstracts":
     browse(db, uid, events)
-elif page == "Submit an abstract":
+elif page == "Submit project / poster / abstract":
     publish(db, uid, events)
 elif page == "Meet participants":
     directory(db, uid)
@@ -770,3 +888,4 @@ elif page == "Super admin":
 else:
     event = st.selectbox("Your event", admin_events, format_func=lambda e: e["title"])
     review_event(db, event)
+    guest_review(db, event)
