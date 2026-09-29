@@ -166,10 +166,10 @@ def auth_screen(db):
                     else:
                         st.error(f"Account creation failed: {exc}")
     with recover:
-        st.write("Enter your account email to request a password reset link.")
+        st.write("Enter your account email to request a one-time password reset code.")
         with st.form("request_password_reset"):
             reset_email = st.text_input("Email address", max_chars=254)
-            request_reset = st.form_submit_button("Send reset link")
+            request_reset = st.form_submit_button("Send reset code")
         if request_reset:
             if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reset_email.strip()):
                 st.info("Enter a valid email address.")
@@ -179,12 +179,33 @@ def auth_screen(db):
                         reset_email.strip(),
                         {"redirect_to": APP_URL},
                     )
-                    st.success("If this email has an account, a reset link has been sent. Check your inbox and spam folder.")
+                    st.success("If this email has an account, a reset code has been sent. Check your inbox and spam folder.")
                 except Exception as exc:
                     if "rate limit" in str(exc).lower():
                         st.info("Reset emails are temporarily limited. Please try again later.")
                     else:
-                        st.error("Could not request a reset link right now. Please try again later.")
+                        st.error("Could not request a reset code right now. Please try again later.")
+        with st.form("verify_recovery_code"):
+            code_email = st.text_input("Account email for the code", max_chars=254)
+            code = st.text_input("Code from email", max_chars=12, autocomplete="one-time-code")
+            verify_code = st.form_submit_button("Verify code")
+        if verify_code:
+            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", code_email.strip()) or not re.fullmatch(r"\d{6,8}", code.strip()):
+                st.info("Enter your account email and the numeric code from the email.")
+            else:
+                try:
+                    response = db.auth.verify_otp({
+                        "email": code_email.strip(), "token": code.strip(), "type": "recovery",
+                    })
+                    if not response.session:
+                        raise ValueError("Recovery session was not created")
+                    st.session_state.recovery_tokens = {
+                        "access_token": response.session.access_token,
+                        "refresh_token": response.session.refresh_token,
+                    }
+                    st.rerun()
+                except Exception:
+                    st.info("The code is invalid or expired. Request a new code and try again.")
 
 
     st.markdown("**Confirmation email expired?**")
@@ -228,8 +249,8 @@ def password_recovery_screen(db):
                 del st.query_params["recovery_token"]
                 st.rerun()
             except Exception:
-                st.info("This reset link is invalid or expired. Request a new link from Forgot password.")
-        if st.button("Request a new link"):
+                st.info("This reset link is invalid or expired. Request a new code from Forgot password.")
+        if st.button("Request a new code"):
             if token_hash:
                 del st.query_params["recovery_token"]
             st.session_state.public_page = "Sign in or create account"
@@ -262,7 +283,7 @@ def password_recovery_screen(db):
             st.session_state.public_page = "Sign in or create account"
             st.rerun()
         except Exception:
-            st.error("Could not change the password. Request a fresh reset link and try again.")
+            st.error("Could not change the password. Request a fresh reset code and try again.")
 
 
 def publish(db, uid, events):
