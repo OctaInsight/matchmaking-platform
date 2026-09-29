@@ -37,16 +37,15 @@ Deploy `app.py` from branch `main`. In **App settings → Secrets**:
 ```toml
 SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_YOUR_KEY"
-COOKIE_PASSWORD = "YOUR_LONG_RANDOM_PRIVATE_VALUE"
 ```
 
-Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically. Keep `COOKIE_PASSWORD` only in Streamlit Secrets; never commit it or a service-role key to GitHub.
+Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically. Never commit a service-role key to GitHub.
 
 Project owners submit project ideas, oral presentations or posters with status `submitted`. Event admins approve or reject them. Only approved submissions appear in browsing. Meeting times are entered and displayed in each visitor’s browser time zone, and stored as UTC.
 
 ## Staying signed in
 
-`COOKIE_PASSWORD` enables encrypted browser storage of the Supabase session. Choose a long random value, keep it stable in Streamlit Secrets, and sign in once more after the deployment. Refreshing or reopening the app then restores your account. Signing out clears the saved session. Changing this password invalidates existing saved sessions, so users must sign in again. Without this setting the app still works, but refreshing the browser signs users out.
+Session restoration through the cookie component is temporarily disabled while the public gallery is stabilised. A full browser refresh signs users out; they can sign in again from the sidebar. The `COOKIE_PASSWORD` secret is currently unused.
 
 ## Email delivery
 
