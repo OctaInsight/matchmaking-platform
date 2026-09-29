@@ -6,7 +6,7 @@ Streamlit application for event-based project ideas, oral presentations, posters
 
 | Role | What they can do |
 | --- | --- |
-| Super admin | Only the verified Supabase account `octainsight@gmail.com`: create events, assign/remove event sub-admins, review any event, and assign older abstracts to an event. |
+| Super admin | Only the verified Supabase account `octainsight@gmail.com`: create events, participant accounts with temporary passwords, and submissions on behalf of authors; assign/remove event sub-admins, review any event, and assign older abstracts to an event. |
 | Event sub-admin | One or more registered users per event: review that event's submitted abstracts and approve or reject them. |
 | Project owner | Select an event, submit an abstract, browse approved abstracts, comment and request meetings with any participant. |
 | Investor | Browse approved abstracts, comment and request meetings with any participant. |
@@ -28,6 +28,8 @@ The earlier global-admin setup has been removed. If you ran it earlier, this mig
 
 Sign in to the app as `octainsight@gmail.com`, open **Super admin**, create an event, then enter the registered email address of each person who should be its sub-admin. Sub-admins can review only their assigned events. Older submitted abstracts can be assigned to an event on this page.
 
+The super admin can create a participant account with a temporary password and add an abstract with optional poster and video links for that author. Confirm that the email belongs to the participant before marking the account as confirmed. Share the temporary password privately; the app does not email it. The submission can be published immediately or sent to the event review queue. These admin tools use a separate server-side Supabase client and do not require a database migration.
+
 Participants can switch between Project owner, Investor and Audience at any time from the sidebar. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
 
 ## Streamlit deployment
@@ -37,9 +39,10 @@ Deploy `app.py` from branch `main`. In **App settings → Secrets**:
 ```toml
 SUPABASE_URL = "https://YOUR-PROJECT.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_YOUR_KEY"
+SUPABASE_SECRET_KEY = "sb_secret_YOUR_SERVER_KEY"
 ```
 
-Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically. Never commit a service-role key to GitHub.
+The secret key enables super-admin account and submission creation. If your project has a legacy `service_role` key instead, set `SUPABASE_SERVICE_ROLE_KEY` in Secrets. These keys bypass row-level security: keep them only in Streamlit Secrets, never in GitHub or browser code. Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically.
 
 Project owners submit project ideas, oral presentations or posters with status `submitted`. Event admins approve or reject them. Only approved submissions appear in browsing. Meeting times are entered and displayed in each visitor’s browser time zone, and stored as UTC.
 
