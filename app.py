@@ -1,4 +1,6 @@
 import re
+import base64
+from logo_asset import LOGO_BASE64
 import json
 import uuid
 import smtplib
@@ -27,6 +29,15 @@ if cookie_password:
     manager = EncryptedCookieManager(prefix="octa-matchmaking/auth/", password=cookie_password)
     if manager.ready():
         cookies = manager
+
+
+def sidebar_footer():
+    st.sidebar.divider()
+    st.sidebar.image(base64.b64decode(LOGO_BASE64), width=130)
+    st.sidebar.markdown("**Created by Octa Insight**")
+    st.sidebar.caption("Pilot test: some functions may not work as expected. "
+                       "Please contact OctaInsight@gmail.com if you find a problem.")
+    st.sidebar.caption("© 2026 Octa Insight AS")
 
 
 def remember_tokens(tokens):
@@ -421,49 +432,8 @@ def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None)
         st.info("The confirmation email was not sent. " + smtp_issue(exc))
 
 
-def browse(db, uid, events):
-    st.subheader("Explore projects, posters and abstracts")
-    category = st.selectbox("Category", ["All", "Project idea", "Oral presentation", "Poster"])
-    query = st.text_input("Search title, author, user, keyword or abstract")
-    event_titles = {"All events": None, **{e["title"]: e["id"] for e in events}}
-    selected_event = st.selectbox("Event", list(event_titles), key="browse_event")
-    try:
-        items = db.rpc("platform_public_gallery").execute().data or []
-    except Exception as exc:
-        st.info("The public gallery is being activated. The organiser needs to apply public_gallery_setup.sql in Supabase.")
-        return
-    wanted = category.lower().replace(" ", "_")
-    items = [x for x in items if
-             (category == "All" or x["presentation_category"] == wanted) and
-             (selected_event == "All events" or x["event_id"] == event_titles[selected_event]) and
-             query.casefold() in " ".join([
-                 x.get("title") or "", x.get("abstract_text") or "",
-                 x.get("author_name") or "", x.get("organisation") or "",
-                 " ".join(x.get("keywords") or []),
-             ]).casefold()]
-    if not items:
-        st.info("No matching approved submissions yet.")
-        return
-    st.caption(f"{len(items)} result(s). Select a card for details.")
-    columns = st.columns(3)
-    for index, item in enumerate(items):
-        with columns[index % 3]:
-            with st.container(border=True):
-                poster = item.get("poster_url")
-                thumb = poster_thumbnail(poster)
-                if thumb:
-                    st.image(thumb, use_container_width=True)
-                else:
-                    st.markdown("### 🖼️" if poster else "### 📄")
-                st.markdown("**" + item["title"] + "**")
-                st.caption(item["presentation_category"].replace("_", " ").title() +
-                           " · " + (item.get("author_name") or "Author"))
-                if st.button("Open", key="open_" + item["id"]):
-                    st.session_state.selected_submission = item["id"]
-    item = next((x for x in items if x["id"] == st.session_state.get("selected_submission")), None)
-    if item is None:
-        return
-    st.divider()
+@st.dialog("Project / Poster / Abstract", width="large")
+def submission_details(db, uid, item):
     st.subheader(item["title"])
     st.caption(item["presentation_category"].replace("_", " ").title() +
                " · " + (item.get("author_name") or "Author") +
@@ -539,6 +509,47 @@ def browse(db, uid, events):
                 st.rerun()
             except Exception as exc:
                 st.error(f"Could not post comment: {exc}")
+
+
+def browse(db, uid, events):
+    st.subheader("Explore projects, posters and abstracts")
+    category = st.selectbox("Category", ["All", "Project idea", "Oral presentation", "Poster"])
+    query = st.text_input("Search title, author, user, keyword or abstract")
+    event_titles = {"All events": None, **{e["title"]: e["id"] for e in events}}
+    selected_event = st.selectbox("Event", list(event_titles), key="browse_event")
+    try:
+        items = db.rpc("platform_public_gallery").execute().data or []
+    except Exception as exc:
+        st.info("The public gallery is being activated. The organiser needs to apply public_gallery_setup.sql in Supabase.")
+        return
+    wanted = category.lower().replace(" ", "_")
+    items = [x for x in items if
+             (category == "All" or x["presentation_category"] == wanted) and
+             (selected_event == "All events" or x["event_id"] == event_titles[selected_event]) and
+             query.casefold() in " ".join([
+                 x.get("title") or "", x.get("abstract_text") or "",
+                 x.get("author_name") or "", x.get("organisation") or "",
+                 " ".join(x.get("keywords") or []),
+             ]).casefold()]
+    if not items:
+        st.info("No matching approved submissions yet.")
+        return
+    st.caption(f"{len(items)} result(s). Select a card for details.")
+    columns = st.columns(3)
+    for index, item in enumerate(items):
+        with columns[index % 3]:
+            with st.container(border=True):
+                poster = item.get("poster_url")
+                thumb = poster_thumbnail(poster)
+                if thumb:
+                    st.image(thumb, use_container_width=True)
+                else:
+                    st.markdown("### 🖼️" if poster else "### 📄")
+                st.markdown("**" + item["title"] + "**")
+                st.caption(item["presentation_category"].replace("_", " ").title() +
+                           " · " + (item.get("author_name") or "Author"))
+                if st.button("Open", key="open_" + item["id"]):
+                    submission_details(db, uid, item)
 
 
 def directory(db, uid):
@@ -799,13 +810,15 @@ except Exception as exc:
     st.error(f"Could not load events: {exc}")
     st.stop()
 if not uid:
-    browse(db, None, events)
     with st.sidebar:
         st.caption("Sign in to request meetings or reply as an author.")
         if st.button("Sign in or create account"):
             st.session_state.show_auth = True
+            st.rerun()
+        sidebar_footer()
     if st.session_state.get("show_auth"):
         auth_screen(db)
+    browse(db, None, events)
     st.stop()
 
 with st.sidebar:
@@ -874,6 +887,7 @@ elif admin_events:
     pages.append("Event admin")
 st.sidebar.caption("Super admin" if is_super else kind.replace("_", " ").title())
 page = st.sidebar.radio("Navigate", pages)
+sidebar_footer()
 if page == "Browse projects / posters / abstracts":
     browse(db, uid, events)
 elif page == "Submit project / poster / abstract":
