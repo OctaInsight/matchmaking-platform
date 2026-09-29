@@ -470,7 +470,7 @@ def submission_details(db, uid, item):
                             st.error(f"Could not post reply: {exc}")
         with st.form("feedback_" + item["id"]):
             if not uid:
-                st.caption("Guest comments are reviewed by the event team before appearing publicly.")
+                st.caption("Your name and comment will be public. Your email stays private.")
                 guest_name = st.text_input("Your name", max_chars=120)
                 guest_email = st.text_input("Your email (private)", max_chars=254)
             comment_text = st.text_area("Leave a comment", max_chars=2000)
@@ -488,11 +488,25 @@ def submission_details(db, uid, item):
                         st.success("Comment posted.")
                         st.write("**You:** " + comment_text.strip())
                     else:
+                        existing_keys = {row["comment_key"] for row in comments}
                         db.rpc("platform_guest_comment", {
                             "p_submission_id": item["id"], "p_name": guest_name.strip(),
                             "p_email": guest_email.strip(), "p_comment": comment_text.strip(),
                         }).execute()
-                        st.success("Comment received. An event admin will review it before it appears publicly.")
+                        latest = db.rpc("platform_public_comments", {
+                            "p_submission_id": item["id"],
+                        }).execute().data or []
+                        published = any(
+                            row["comment_key"] not in existing_keys and
+                            row["display_name"] == guest_name.strip() and
+                            row["comment_text"] == comment_text.strip()
+                            for row in latest
+                        )
+                        if published:
+                            st.success("Comment posted and visible publicly.")
+                            st.write(f"**{guest_name.strip()}:** {comment_text.strip()}")
+                        else:
+                            st.info("Comment saved. The database update for immediate publishing has not been applied yet.")
                 except Exception as exc:
                     st.error(f"Could not post comment: {exc}")
     with meeting_tab:
@@ -668,28 +682,6 @@ def review_event(db, event):
                     st.error(f"Could not review submission: {exc}")
 
 
-def guest_review(db, event):
-    st.markdown("**Guest comments awaiting review**")
-    try:
-        rows = db.rpc("platform_guest_comment_queue", {"p_event_id": event["id"]}).execute().data or []
-    except Exception as exc:
-        st.error(f"Could not load guest comments: {exc}")
-        return
-    for row in rows:
-        st.write(f"**{row['submission_title']}** — {row['guest_name']}: {row['comment_text']}")
-        approve, reject = st.columns(2)
-        decision = "approved" if approve.button("Show comment", key="guest_yes_" + row["id"]) else (
-            "rejected" if reject.button("Reject comment", key="guest_no_" + row["id"]) else None)
-        if decision:
-            try:
-                db.rpc("platform_review_guest_comment", {
-                    "p_comment_id": row["id"], "p_decision": decision,
-                }).execute()
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not review comment: {exc}")
-
-
 def super_dashboard(db, events):
     st.subheader("Super admin dashboard")
     st.markdown("**Test the Jitsi video call**")
@@ -771,7 +763,6 @@ def super_dashboard(db, events):
     except Exception as exc:
         st.error(f"Could not load event admins: {exc}")
     review_event(db, event)
-    guest_review(db, event)
 
 
 def participant_type(db, uid):
@@ -899,4 +890,3 @@ elif page == "Super admin":
 else:
     event = st.selectbox("Your event", admin_events, format_func=lambda e: e["title"])
     review_event(db, event)
-    guest_review(db, event)
