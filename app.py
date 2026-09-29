@@ -1,5 +1,4 @@
 import re
-import base64
 from logo_asset import LOGO_BASE64
 import json
 import uuid
@@ -33,7 +32,12 @@ if cookie_password:
 
 def sidebar_footer():
     st.sidebar.divider()
-    st.sidebar.image(base64.b64decode(LOGO_BASE64), width=130)
+    st.sidebar.markdown(
+        '<div style="background:#101820;padding:12px;border-radius:8px;text-align:center">'
+        '<img alt="Octa Insight" width="140" src="data:image/png;base64,'
+        + LOGO_BASE64 + '"></div>',
+        unsafe_allow_html=True,
+    )
     st.sidebar.markdown("**Created by Octa Insight**")
     st.sidebar.caption("Pilot test: some functions may not work as expected. "
                        "Please contact OctaInsight@gmail.com if you find a problem.")
@@ -146,6 +150,7 @@ def save_profile(db, uid):
     st.stop()
 
 
+@st.dialog("Sign in or create account", width="large")
 def auth_screen(db):
     sign_in, sign_up = st.tabs(["Sign in", "Create account"])
     with sign_in:
@@ -813,11 +818,8 @@ if not uid:
     with st.sidebar:
         st.caption("Sign in to request meetings or reply as an author.")
         if st.button("Sign in or create account"):
-            st.session_state.show_auth = True
-            st.rerun()
+            auth_screen(db)
         sidebar_footer()
-    if st.session_state.get("show_auth"):
-        auth_screen(db)
     browse(db, None, events)
     st.stop()
 
