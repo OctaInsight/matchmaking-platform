@@ -1,4 +1,5 @@
 import re
+from html import escape
 from logo_asset import LOGO_BASE64
 import json
 import uuid
@@ -452,7 +453,12 @@ def submission_details(db, uid, item):
         st.link_button("Open public poster", item["poster_url"])
         thumb = poster_thumbnail(item["poster_url"])
         if thumb:
-            st.image(thumb)
+            st.markdown(
+                '<img src="' + escape(thumb, quote=True) +
+                '" alt="Poster preview" loading="lazy" '
+                'style="max-width:100%;max-height:75vh;object-fit:contain">',
+                unsafe_allow_html=True,
+            )
     if item.get("video_url"):
         try:
             st.video(item["video_url"])
@@ -545,11 +551,7 @@ def browse(db, uid, events):
         with columns[index % 3]:
             with st.container(border=True):
                 poster = item.get("poster_url")
-                thumb = poster_thumbnail(poster)
-                if thumb:
-                    st.image(thumb, use_container_width=True)
-                else:
-                    st.markdown("### 🖼️" if poster else "### 📄")
+                st.markdown("### 🖼️" if poster else "### 📄")
                 st.markdown("**" + item["title"] + "**")
                 st.caption(item["presentation_category"].replace("_", " ").title() +
                            " · " + (item.get("author_name") or "Author"))
