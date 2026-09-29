@@ -1,6 +1,6 @@
 # Matchmaking Platform
 
-Streamlit application for event-based abstract submission, review and matchmaking.
+Streamlit application for event-based project ideas, oral presentations, posters and matchmaking.
 
 ## Roles
 
@@ -11,6 +11,14 @@ Streamlit application for event-based abstract submission, review and matchmakin
 | Project owner | Select an event, submit an abstract, browse approved abstracts, comment and request meetings with any participant. |
 | Investor | Browse approved abstracts, comment and request meetings with any participant. |
 | Audience | Browse approved abstracts, comment and request meetings with any participant. |
+
+## Public gallery and guest comments
+
+Apply [public_gallery_setup.sql](public_gallery_setup.sql) in the **existing Supabase SQL Editor** after `multi_role_setup.sql`. It adds a category and optional support request to submissions, public functions that return only approved submissions, and a separate moderated guest-comment table. Existing submissions default to **Project idea**; they are not deleted. Guest email addresses remain private in the database and are not returned by the gallery or comment functions.
+
+Visitors can search by category, title, author and keyword and comment using a name and email. Guest comments enter an event-admin review queue before appearing publicly. Signed-in users can comment directly. Only a signed-in owner can reply to comments on their own approved submission; meetings continue to require sign-in. The super admin and each event sub-admin can review guest comments for their event. A basic per-email posting limit is included, but public forms can attract spam; monitor the queue.
+
+Poster and video fields accept public HTTPS links. Authors should upload poster files to Google Drive or a comparable public host and videos to YouTube or another publicly accessible service, then paste links. Direct image links and supported Google Drive file links can render a thumbnail; PDF posters show an icon and an **Open public poster** link.
 
 ## One-time database setup
 
@@ -34,7 +42,7 @@ COOKIE_PASSWORD = "YOUR_LONG_RANDOM_PRIVATE_VALUE"
 
 Allow `https://octa-matchmaking.streamlit.app/` in Supabase **Authentication → URL Configuration → Redirect URLs**. Streamlit installs packages from `requirements.txt` automatically. Keep `COOKIE_PASSWORD` only in Streamlit Secrets; never commit it or a service-role key to GitHub.
 
-Project owners submit abstracts with status `submitted`. Event admins approve or reject them. Only approved abstracts appear in browsing. Meeting times are entered and displayed in each visitor’s browser time zone, and stored as UTC.
+Project owners submit project ideas, oral presentations or posters with status `submitted`. Event admins approve or reject them. Only approved submissions appear in browsing. Meeting times are entered and displayed in each visitor’s browser time zone, and stored as UTC.
 
 ## Staying signed in
 
