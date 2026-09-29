@@ -464,6 +464,7 @@ def submission_details(db, uid, item):
                         st.error(f"Could not post reply: {exc}")
     with st.form("feedback_" + item["id"]):
         if not uid:
+            st.caption("Guest comments are reviewed by the event team before appearing publicly.")
             guest_name = st.text_input("Your name", max_chars=120)
             guest_email = st.text_input("Your email (private)", max_chars=254)
         comment_text = st.text_area("Leave a comment", max_chars=2000)
@@ -478,29 +479,39 @@ def submission_details(db, uid, item):
                         "submission_id": item["id"], "author_id": uid,
                         "comment_text": comment_text.strip(),
                     }).execute()
-                    st.success("Comment posted.")
+                    st.rerun()
                 else:
                     db.rpc("platform_guest_comment", {
                         "p_submission_id": item["id"], "p_name": guest_name.strip(),
                         "p_email": guest_email.strip(), "p_comment": comment_text.strip(),
                     }).execute()
-                    st.success("Comment received. It will appear after review.")
-                st.rerun()
+                    st.success("Comment received. An event admin will review it before it appears publicly.")
             except Exception as exc:
                 st.error(f"Could not post comment: {exc}")
 
 
 def browse(db, uid, events):
-    st.subheader("Explore projects, posters and abstracts")
-    category = st.selectbox("Category", ["All", "Project idea", "Oral presentation", "Poster"])
-    query = st.text_input("Search title, author, user, keyword or abstract")
-    event_titles = {"All events": None, **{e["title"]: e["id"] for e in events}}
-    selected_event = st.selectbox("Event", list(event_titles), key="browse_event")
     try:
         items = db.rpc("platform_public_gallery").execute().data or []
     except Exception as exc:
         st.info("The public gallery is being activated. The organiser needs to apply public_gallery_setup.sql in Supabase.")
         return
+    selected_id = st.query_params.get("submission")
+    if selected_id:
+        if st.button("← Back to gallery"):
+            del st.query_params["submission"]
+            st.rerun()
+        item = next((x for x in items if x["id"] == selected_id), None)
+        if item:
+            submission_details(db, uid, item)
+        else:
+            st.info("This submission is not available publicly.")
+        return
+    st.subheader("Explore projects, posters and abstracts")
+    category = st.selectbox("Category", ["All", "Project idea", "Oral presentation", "Poster"])
+    query = st.text_input("Search title, author, user, keyword or abstract")
+    event_titles = {"All events": None, **{e["title"]: e["id"] for e in events}}
+    selected_event = st.selectbox("Event", list(event_titles), key="browse_event")
     wanted = category.lower().replace(" ", "_")
     items = [x for x in items if
              (category == "All" or x["presentation_category"] == wanted) and
@@ -513,7 +524,7 @@ def browse(db, uid, events):
     if not items:
         st.info("No matching approved submissions yet.")
         return
-    st.caption(f"{len(items)} result(s). Select a card for details.")
+    st.caption(f"{len(items)} result(s). Open a card for the full abstract, poster, video and comments.")
     columns = st.columns(3)
     for index, item in enumerate(items):
         with columns[index % 3]:
@@ -523,8 +534,9 @@ def browse(db, uid, events):
                 st.markdown("**" + item["title"] + "**")
                 st.caption(item["presentation_category"].replace("_", " ").title() +
                            " · " + (item.get("author_name") or "Author"))
-                with st.expander("Open project / poster / abstract"):
-                    submission_details(db, uid, item)
+                if st.button("View full submission", key="open_" + item["id"]):
+                    st.query_params["submission"] = item["id"]
+                    st.rerun()
 
 
 def directory(db, uid):
