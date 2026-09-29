@@ -1,7 +1,6 @@
 import re
 from html import escape
 from logo_asset import LOGO_BASE64
-import json
 import uuid
 import smtplib
 import socket
@@ -13,23 +12,10 @@ from urllib.parse import urlparse
 
 import streamlit as st
 from supabase import create_client
-from streamlit_cookies_manager import EncryptedCookieManager
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
 APP_URL = "https://octa-matchmaking.streamlit.app/"
-
-# A server-only secret encrypts the Supabase session stored in the browser.
-try:
-    cookie_password = st.secrets.get("COOKIE_PASSWORD")
-except FileNotFoundError:
-    cookie_password = None
-cookies = None
-if cookie_password:
-    manager = EncryptedCookieManager(prefix="octa-matchmaking/auth/", password=cookie_password)
-    if manager.ready():
-        cookies = manager
-
 
 def sidebar_footer():
     st.sidebar.divider()
@@ -47,18 +33,10 @@ def sidebar_footer():
 
 def remember_tokens(tokens):
     st.session_state.tokens = tokens
-    if cookies is not None:
-        encoded = json.dumps(tokens)
-        if cookies.get("session") != encoded:
-            cookies["session"] = encoded
-            cookies.save()
 
 
 def forget_tokens():
     st.session_state.pop("tokens", None)
-    if cookies is not None and cookies.get("session") is not None:
-        del cookies["session"]
-        cookies.save()
 
 
 
@@ -72,14 +50,6 @@ def client():
         st.stop()
     db = create_client(url, key)
     tokens = st.session_state.get("tokens")
-    if not tokens and cookies is not None:
-        try:
-            tokens = json.loads(cookies.get("session") or "null")
-            if tokens:
-                st.session_state.tokens = tokens
-        except (ValueError, TypeError):
-            forget_tokens()
-            tokens = None
     if tokens:
         try:
             response = db.auth.set_session(tokens["access_token"], tokens["refresh_token"])
@@ -151,7 +121,6 @@ def save_profile(db, uid):
     st.stop()
 
 
-@st.dialog("Sign in or create account", width="large")
 def auth_screen(db):
     sign_in, sign_up = st.tabs(["Sign in", "Create account"])
     with sign_in:
@@ -438,7 +407,6 @@ def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None)
         st.info("The confirmation email was not sent. " + smtp_issue(exc))
 
 
-@st.dialog("Project / Poster / Abstract", width="large")
 def submission_details(db, uid, item):
     st.subheader(item["title"])
     st.caption(item["presentation_category"].replace("_", " ").title() +
@@ -555,7 +523,7 @@ def browse(db, uid, events):
                 st.markdown("**" + item["title"] + "**")
                 st.caption(item["presentation_category"].replace("_", " ").title() +
                            " · " + (item.get("author_name") or "Author"))
-                if st.button("Open", key="open_" + item["id"]):
+                with st.expander("Open project / poster / abstract"):
                     submission_details(db, uid, item)
 
 
@@ -818,11 +786,12 @@ except Exception as exc:
     st.stop()
 if not uid:
     with st.sidebar:
-        st.caption("Sign in to request meetings or reply as an author.")
-        if st.button("Sign in or create account"):
-            auth_screen(db)
+        public_page = st.radio("Navigate", ["Browse", "Sign in or create account"])
         sidebar_footer()
-    browse(db, None, events)
+    if public_page == "Browse":
+        browse(db, None, events)
+    else:
+        auth_screen(db)
     st.stop()
 
 with st.sidebar:
