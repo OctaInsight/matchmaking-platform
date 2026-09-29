@@ -49,9 +49,9 @@ Session restoration through the cookie component is temporarily disabled while t
 
 ## Password recovery
 
-The email address is the sign-in name. **Sign in or create account → Forgot password** requests a Supabase password reset email. The response is intentionally the same whether the address has an account, to avoid exposing the list of registered participants. A valid reset link returns to the app; the user enters their email to verify the one-time token, then sets a new password.
+The email address is the sign-in name. **Sign in or create account → Forgot password** requests a Supabase password reset code. The response is intentionally the same whether the address has an account, to avoid exposing the list of registered participants. The user enters the emailed code and their email in the app, then sets a new password. No link handoff is needed. Older token-hash recovery links are still accepted if already configured.
 
-In the existing Supabase project, open **Authentication → Email Templates → Reset Password** and replace that template's body with [recovery_email_template.html](recovery_email_template.html). The link uses `{{ .RedirectTo }}` and `{{ .TokenHash }}`. Keep `https://octa-matchmaking.streamlit.app/` in **Authentication → URL Configuration → Redirect URLs**. Send a test reset request only after saving the template. Supabase must be able to deliver Auth emails; its built-in sender is limited and a custom SMTP provider is recommended for event use.
+In the existing Supabase project, open **Authentication → Email Templates → Reset Password** and replace that template's body with [recovery_email_template.html](recovery_email_template.html). It includes the Supabase `{{ .Token }}` code. Send a new test reset request after saving the template. Emails already sent contain the old link and cannot supply the code. Supabase must be able to deliver Auth emails; its built-in sender is limited and a custom SMTP provider is recommended for event use.
 
 ## Email delivery
 
