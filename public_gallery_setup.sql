@@ -23,7 +23,7 @@ create table if not exists public.platform_guest_comments (
   guest_name text not null,
   guest_email text not null,
   comment_text text not null,
-  status text not null default 'pending'
+  status text not null default 'approved'
     check (status in ('pending','approved','rejected')),
   created_at timestamptz not null default now()
 );
@@ -80,8 +80,8 @@ begin
     raise exception 'Please wait before posting more comments';
   end if;
   insert into public.platform_guest_comments
-    (submission_id,guest_name,guest_email,comment_text)
-  values (p_submission_id,trim(p_name),lower(trim(p_email)),trim(p_comment));
+    (submission_id,guest_name,guest_email,comment_text,status)
+  values (p_submission_id,trim(p_name),lower(trim(p_email)),trim(p_comment),'approved');
 end;
 $$;
 
