@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Recovery callback</title></head>
+<body style="margin:0">
+<script>
+  const send = (type, payload = {}) => window.parent.postMessage(
+    {isStreamlitMessage: true, type, ...payload}, "*"
+  );
+  let captured = false;
+  window.addEventListener("message", (event) => {
+    if (event.data?.type !== "streamlit:render" || captured) return;
+    send("streamlit:setFrameHeight", {height: 0});
+    try {
+      // Streamlit Cloud embeds its app in a same-origin frame. Supabase puts
+      // recovery credentials in the outer page's fragment by default.
+      const page = window.top.location;
+      const fields = new URLSearchParams(page.hash.slice(1));
+      if (fields.get("type") !== "recovery" ||
+          !fields.get("access_token") || !fields.get("refresh_token")) return;
+      captured = true;
+      send("streamlit:setComponentValue", {value: page.href, dataType: "json"});
+      window.top.history.replaceState(null, "", page.pathname + page.search);
+    } catch (_) {
+      // The form in Forgot password accepts the callback URL when a browser
+      // blocks access to the outer page.
+    }
+  });
+  send("streamlit:componentReady", {apiVersion: 1});
+</script>
+</body>
+</html>
