@@ -412,82 +412,95 @@ def submission_details(db, uid, item):
     st.caption(item["presentation_category"].replace("_", " ").title() +
                " · " + (item.get("author_name") or "Author") +
                " · " + (item.get("organisation") or ""))
-    st.write(item["abstract_text"])
-    if item.get("support_request"):
-        st.write("Help or investment sought:", item["support_request"])
-    if item.get("keywords"):
-        st.caption("Keywords: " + ", ".join(item["keywords"]))
-    if item.get("poster_url"):
-        st.link_button("Open public poster", item["poster_url"])
-        thumb = poster_thumbnail(item["poster_url"])
-        if thumb:
-            st.markdown(
-                '<img src="' + escape(thumb, quote=True) +
-                '" alt="Poster preview" loading="lazy" '
-                'style="max-width:100%;max-height:75vh;object-fit:contain">',
-                unsafe_allow_html=True,
-            )
-    if item.get("video_url"):
-        try:
-            st.video(item["video_url"])
-        except Exception:
-            st.link_button("Open public video", item["video_url"])
-    if uid:
-        meeting_form(db, uid, item["owner_id"], item.get("author_name") or "the author", item["id"], item["id"])
-    else:
-        st.caption("Sign in to request or accept a meeting.")
-    st.markdown("**Comments**")
-    try:
-        comments = db.rpc("platform_public_comments", {"p_submission_id": item["id"]}).execute().data or []
-    except Exception as exc:
-        st.error(f"Could not load comments: {exc}")
-        return
-    for comment in comments:
-        prefix = "↳ " if comment.get("parent_key") else ""
-        st.write(f"{prefix}**{comment['display_name']}:** {comment['comment_text']}")
-        if uid == item["owner_id"] and not comment.get("parent_key"):
-            with st.form("reply_" + comment["comment_key"]):
-                reply = st.text_area("Reply as the author", max_chars=2000)
-                send_reply = st.form_submit_button("Reply")
-            if send_reply:
-                if len(reply.strip()) < 2:
-                    st.info("Write a short reply.")
-                else:
-                    try:
-                        db.rpc("platform_author_reply", {
-                            "p_submission_id": item["id"],
-                            "p_parent_key": comment["comment_key"],
-                            "p_reply": reply.strip(),
-                        }).execute()
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Could not post reply: {exc}")
-    with st.form("feedback_" + item["id"]):
-        if not uid:
-            st.caption("Guest comments are reviewed by the event team before appearing publicly.")
-            guest_name = st.text_input("Your name", max_chars=120)
-            guest_email = st.text_input("Your email (private)", max_chars=254)
-        comment_text = st.text_area("Leave a comment", max_chars=2000)
-        send = st.form_submit_button("Post comment")
-    if send:
-        if len(comment_text.strip()) < 2:
-            st.info("Write a short comment before posting.")
+    abstract_tab, poster_tab, video_tab, comments_tab, meeting_tab = st.tabs(
+        ["Abstract", "Poster", "Video", "Comments", "Meeting"])
+    with abstract_tab:
+        st.write(item["abstract_text"])
+        if item.get("support_request"):
+            st.write("Help or investment sought:", item["support_request"])
+        if item.get("keywords"):
+            st.caption("Keywords: " + ", ".join(item["keywords"]))
+    with poster_tab:
+        if item.get("poster_url"):
+            st.link_button("Open public poster", item["poster_url"])
+            thumb = poster_thumbnail(item["poster_url"])
+            if thumb:
+                st.markdown(
+                    '<img src="' + escape(thumb, quote=True) +
+                    '" alt="Poster preview" loading="lazy" '
+                    'style="max-width:100%;max-height:75vh;object-fit:contain">',
+                    unsafe_allow_html=True,
+                )
         else:
+            st.info("No poster link was provided.")
+    with video_tab:
+        if item.get("video_url"):
             try:
-                if uid:
-                    db.table("comments").insert({
-                        "submission_id": item["id"], "author_id": uid,
-                        "comment_text": comment_text.strip(),
-                    }).execute()
-                    st.rerun()
-                else:
-                    db.rpc("platform_guest_comment", {
-                        "p_submission_id": item["id"], "p_name": guest_name.strip(),
-                        "p_email": guest_email.strip(), "p_comment": comment_text.strip(),
-                    }).execute()
-                    st.success("Comment received. An event admin will review it before it appears publicly.")
-            except Exception as exc:
-                st.error(f"Could not post comment: {exc}")
+                st.video(item["video_url"])
+            except Exception:
+                st.link_button("Open public video", item["video_url"])
+        else:
+            st.info("No video link was provided.")
+    with comments_tab:
+        try:
+            comments = db.rpc("platform_public_comments", {"p_submission_id": item["id"]}).execute().data or []
+        except Exception as exc:
+            st.error(f"Could not load comments: {exc}")
+            return
+        for comment in comments:
+            prefix = "↳ " if comment.get("parent_key") else ""
+            st.write(f"{prefix}**{comment['display_name']}:** {comment['comment_text']}")
+            if uid == item["owner_id"] and not comment.get("parent_key"):
+                with st.form("reply_" + comment["comment_key"]):
+                    reply = st.text_area("Reply as the author", max_chars=2000)
+                    send_reply = st.form_submit_button("Reply")
+                if send_reply:
+                    if len(reply.strip()) < 2:
+                        st.info("Write a short reply.")
+                    else:
+                        try:
+                            db.rpc("platform_author_reply", {
+                                "p_submission_id": item["id"],
+                                "p_parent_key": comment["comment_key"],
+                                "p_reply": reply.strip(),
+                            }).execute()
+                            st.success("Reply posted.")
+                            st.write("↳ **You (author):** " + reply.strip())
+                        except Exception as exc:
+                            st.error(f"Could not post reply: {exc}")
+        with st.form("feedback_" + item["id"]):
+            if not uid:
+                st.caption("Guest comments are reviewed by the event team before appearing publicly.")
+                guest_name = st.text_input("Your name", max_chars=120)
+                guest_email = st.text_input("Your email (private)", max_chars=254)
+            comment_text = st.text_area("Leave a comment", max_chars=2000)
+            send = st.form_submit_button("Post comment")
+        if send:
+            if len(comment_text.strip()) < 2:
+                st.info("Write a short comment before posting.")
+            else:
+                try:
+                    if uid:
+                        db.table("comments").insert({
+                            "submission_id": item["id"], "author_id": uid,
+                            "comment_text": comment_text.strip(),
+                        }).execute()
+                        st.success("Comment posted.")
+                        st.write("**You:** " + comment_text.strip())
+                    else:
+                        db.rpc("platform_guest_comment", {
+                            "p_submission_id": item["id"], "p_name": guest_name.strip(),
+                            "p_email": guest_email.strip(), "p_comment": comment_text.strip(),
+                        }).execute()
+                        st.success("Comment received. An event admin will review it before it appears publicly.")
+                except Exception as exc:
+                    st.error(f"Could not post comment: {exc}")
+    with meeting_tab:
+        if uid:
+            meeting_form(db, uid, item["owner_id"],
+                         item.get("author_name") or "the author", item["id"], item["id"])
+        else:
+            st.caption("Sign in to request or accept a meeting.")
 
 
 def browse(db, uid, events):
