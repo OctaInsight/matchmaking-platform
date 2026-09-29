@@ -434,7 +434,7 @@ def browse(db, uid, events):
     try:
         items = db.rpc("platform_public_gallery").execute().data or []
     except Exception as exc:
-        st.error(f"Could not load the public gallery. Apply public_gallery_setup.sql in Supabase. Details: {exc}")
+        st.info("The public gallery is being activated. The organiser needs to apply public_gallery_setup.sql in Supabase.")
         return
     wanted = category.lower().replace(" ", "_")
     items = [x for x in items if
