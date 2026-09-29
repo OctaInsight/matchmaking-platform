@@ -9,13 +9,37 @@ from email.message import EmailMessage
 from datetime import datetime, timezone, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlparse
+from urllib.parse import parse_qs
+from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 from supabase import create_client
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
 APP_URL = "https://octa-matchmaking.streamlit.app/"
+read_recovery_fragment = components.declare_component(
+    "read_recovery_fragment", path=str(Path(__file__).parent / "recovery_fragment")
+)
+
+
+def recovery_tokens_from_url(value):
+    """Accept only a Supabase recovery callback, never a plain sign-in link."""
+    try:
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or parsed.netloc != urlparse(APP_URL).netloc:
+            return None
+        fields = parse_qs(parsed.fragment)
+        if fields.get("type") != ["recovery"]:
+            return None
+        access = fields.get("access_token", [""])[0]
+        refresh = fields.get("refresh_token", [""])[0]
+        if not access or not refresh:
+            return None
+        return {"access_token": access, "refresh_token": refresh}
+    except (TypeError, ValueError):
+        return None
 
 def sidebar_footer():
     st.sidebar.divider()
@@ -166,10 +190,10 @@ def auth_screen(db):
                     else:
                         st.error(f"Account creation failed: {exc}")
     with recover:
-        st.write("Enter your account email to request a one-time password reset code.")
+        st.write("Enter your account email. Supabase will email you a password reset link.")
         with st.form("request_password_reset"):
             reset_email = st.text_input("Email address", max_chars=254)
-            request_reset = st.form_submit_button("Send reset code")
+            request_reset = st.form_submit_button("Send reset link")
         if request_reset:
             if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reset_email.strip()):
                 st.info("Enter a valid email address.")
@@ -179,33 +203,24 @@ def auth_screen(db):
                         reset_email.strip(),
                         {"redirect_to": APP_URL},
                     )
-                    st.success("If this email has an account, a reset code has been sent. Check your inbox and spam folder.")
+                    st.success("If this email has an account, a reset link has been sent. Check your inbox and spam folder.")
                 except Exception as exc:
                     if "rate limit" in str(exc).lower():
                         st.info("Reset emails are temporarily limited. Please try again later.")
                     else:
-                        st.error("Could not request a reset code right now. Please try again later.")
-        with st.form("verify_recovery_code"):
-            code_email = st.text_input("Account email for the code", max_chars=254)
-            code = st.text_input("Code from email", max_chars=12, autocomplete="one-time-code")
-            verify_code = st.form_submit_button("Verify code")
-        if verify_code:
-            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", code_email.strip()) or not re.fullmatch(r"\d{6,8}", code.strip()):
-                st.info("Enter your account email and the numeric code from the email.")
-            else:
-                try:
-                    response = db.auth.verify_otp({
-                        "email": code_email.strip(), "token": code.strip(), "type": "recovery",
-                    })
-                    if not response.session:
-                        raise ValueError("Recovery session was not created")
-                    st.session_state.recovery_tokens = {
-                        "access_token": response.session.access_token,
-                        "refresh_token": response.session.refresh_token,
-                    }
+                        st.error("Could not request a reset link right now. Please try again later.")
+        with st.expander("Reset link opened the home page?"):
+            st.write("Copy the complete URL from your browser address bar after opening the email link, then paste it here. The URL contains a private recovery token; do not share it with anyone.")
+            with st.form("paste_recovery_link"):
+                callback_url = st.text_input("Complete URL from address bar", type="password")
+                use_link = st.form_submit_button("Continue to new password")
+            if use_link:
+                tokens = recovery_tokens_from_url(callback_url.strip())
+                if tokens:
+                    st.session_state.recovery_tokens = tokens
                     st.rerun()
-                except Exception:
-                    st.info("The code is invalid or expired. Request a new code and try again.")
+                else:
+                    st.info("This is not a valid recovery URL. Open a new reset email and copy the complete browser address, including the part after #.")
 
 
     st.markdown("**Confirmation email expired?**")
@@ -249,8 +264,8 @@ def password_recovery_screen(db):
                 del st.query_params["recovery_token"]
                 st.rerun()
             except Exception:
-                st.info("This reset link is invalid or expired. Request a new code from Forgot password.")
-        if st.button("Request a new code"):
+                st.info("This reset link is invalid or expired. Request a new link from Forgot password.")
+        if st.button("Request a new link"):
             if token_hash:
                 del st.query_params["recovery_token"]
             st.session_state.public_page = "Sign in or create account"
@@ -283,7 +298,7 @@ def password_recovery_screen(db):
             st.session_state.public_page = "Sign in or create account"
             st.rerun()
         except Exception:
-            st.error("Could not change the password. Request a fresh reset code and try again.")
+            st.error("Could not change the password. Request a fresh reset link and try again.")
 
 
 def publish(db, uid, events):
@@ -898,6 +913,13 @@ def available_events(db):
 
 
 db = client()
+if not st.session_state.get("recovery_tokens"):
+    callback_url = read_recovery_fragment(default=None, key="recovery_fragment")
+    if callback_url:
+        tokens = recovery_tokens_from_url(callback_url)
+        if tokens:
+            st.session_state.recovery_tokens = tokens
+            st.rerun()
 if st.query_params.get("recovery_token") or st.session_state.get("recovery_tokens"):
     with st.sidebar:
         sidebar_footer()
