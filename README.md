@@ -47,6 +47,12 @@ Project owners submit project ideas, oral presentations or posters with status `
 
 Session restoration through the cookie component is temporarily disabled while the public gallery is stabilised. A full browser refresh signs users out; they can sign in again from the sidebar. The `COOKIE_PASSWORD` secret is currently unused.
 
+## Password recovery
+
+The email address is the sign-in name. **Sign in or create account → Forgot password** requests a Supabase password reset email. The response is intentionally the same whether the address has an account, to avoid exposing the list of registered participants. A valid reset link returns to the app; the user enters their email to verify the one-time token, then sets a new password.
+
+In the existing Supabase project, open **Authentication → Email Templates → Reset Password** and replace that template's body with [recovery_email_template.html](recovery_email_template.html). The link uses `{{ .RedirectTo }}` and `{{ .TokenHash }}`. Keep `https://octa-matchmaking.streamlit.app/` in **Authentication → URL Configuration → Redirect URLs**. Send a test reset request only after saving the template. Supabase must be able to deliver Auth emails; its built-in sender is limited and a custom SMTP provider is recommended for event use.
+
 ## Email delivery
 
 Supabase's built-in email sender has a very low project-wide limit. Before inviting conference participants, configure a custom SMTP provider in **Supabase → Authentication → SMTP Settings** and test signup/confirmation with a second account. Do not disable email confirmation merely to bypass the sending limit.
