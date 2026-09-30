@@ -62,7 +62,24 @@ No Supabase email-template change is needed. Keep `https://octa-matchmaking.stre
 
 Supabase's built-in email sender has a very low project-wide limit. Before inviting conference participants, configure a custom SMTP provider in **Supabase → Authentication → SMTP Settings** and test signup/confirmation with a second account. Do not disable email confirmation merely to bypass the sending limit.
 
-The app sends the requester a confirmation email after saving a new meeting request. In **Super admin → Email diagnostics**, use **Send test email to me** to check the SMTP configuration and delivery. Earlier requests do not trigger an email retroactively. **Streamlit does not automatically inherit Supabase SMTP settings.** Add these to Streamlit **App settings → Secrets**, using credentials from your email provider:
+The app sends the recipient an invitation email after saving a new meeting request. It includes the requester’s name, purpose, proposed time in UTC, current pending-request count, and a link to the app. The requester also receives a confirmation. Earlier requests do not trigger emails retroactively. Emails are sent when the request is created, not as a scheduled digest. Email failures do not undo the saved request.
+
+### Resend (preferred)
+
+Add these to Streamlit **App settings → Secrets**:
+
+```toml
+RESEND_API_KEY = "re_YOUR_PRIVATE_KEY"
+RESEND_FROM_EMAIL = "matchmaking@conference.cloudearthi.com"
+```
+
+Verify the sender domain in Resend and give the key sending access to that domain. The app uses Resend’s HTTPS API with a 15-second timeout and per-request idempotency keys. Resend takes priority over SMTP when RESEND_API_KEY is present. The API key is never shown in diagnostics or committed to GitHub. No new package or database migration is required. Recipient email addresses are resolved privately through Supabase Auth using the existing server-side SUPABASE_SECRET_KEY (or legacy SUPABASE_SERVICE_ROLE_KEY), after checking the saved meeting belongs to the authenticated requester.
+
+In **Super admin → Email diagnostics**, use **Send test email to me**. A success means the provider accepted the email, not that inbox delivery is guaranteed. Check the inbox/spam folder and Resend dashboard for delivery status. Next, create a meeting request between two controlled participant accounts and check the recipient invitation, pending count and requester confirmation. On a provider limit or error, the request remains available in My meetings; the app does not retry automatically.
+
+### SMTP fallback
+
+**Streamlit does not automatically inherit Supabase SMTP settings.** If no Resend key is configured, existing SMTP delivery remains available:
 
 ```toml
 SMTP_HOST = "smtp.example.com"
@@ -72,7 +89,9 @@ SMTP_PASSWORD = "your-smtp-password"
 SMTP_FROM = "Matchmaking <meetings@your-verified-domain.example>"
 ```
 
-Port 587 uses STARTTLS; port 465 uses TLS from connection start. The sender address must be permitted by your SMTP provider. Without these settings the request is still saved, but the app cannot send its confirmation email. Never commit these values to GitHub.
+Port 587 uses STARTTLS; port 465 uses TLS from connection start. The sender must be permitted by the provider. Supabase signup and password-reset emails continue to use Supabase Auth’s separately configured email service.
+
+Reference: [Resend Send Email API](https://resend.com/docs/api-reference/emails/send-email).
 
 ## Jitsi calls
 
