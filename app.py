@@ -74,7 +74,7 @@ def sidebar_footer():
         + LOGO_BASE64 + '"></div>',
         unsafe_allow_html=True,
     )
-    st.sidebar.markdown("**Created by Octa Insight**")
+    st.sidebar.markdown("**Created by Octa System**")
     st.sidebar.caption("Pilot test: some functions may not work as expected. "
                        "Please contact OctaInsight@gmail.com if you find a problem.")
     st.sidebar.caption("© 2026 Octa Insight AS")
