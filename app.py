@@ -241,7 +241,7 @@ def save_profile(db, uid):
 
 def auth_screen(db):
     st.caption("Your email address is your sign-in name.")
-    sign_in, sign_up, recover = st.tabs(["Sign in", "Create account", "Forgot password"])
+    sign_in, sign_up = st.tabs(["Sign in", "Create account"])
     with sign_in:
         with st.form("login"):
             email = st.text_input("Email", key="login_email")
@@ -283,52 +283,6 @@ def auth_screen(db):
                         st.info("Confirmation emails are temporarily limited by Supabase. Please try again later. The event organiser is setting up reliable email delivery.")
                     else:
                         st.error(f"Account creation failed: {exc}")
-    with recover:
-        st.write("Enter your account email. Supabase will email you a password reset link.")
-        with st.form("request_password_reset"):
-            reset_email = st.text_input("Email address", max_chars=254)
-            request_reset = st.form_submit_button("Send reset link")
-        if request_reset:
-            if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", reset_email.strip()):
-                st.info("Enter a valid email address.")
-            else:
-                try:
-                    db.auth.reset_password_for_email(
-                        reset_email.strip(),
-                        {"redirect_to": APP_URL},
-                    )
-                    st.success("If this email has an account, a reset link has been sent. Check your inbox and spam folder.")
-                except Exception as exc:
-                    if "rate limit" in str(exc).lower():
-                        st.info("Reset emails are temporarily limited. Please try again later.")
-                    else:
-                        st.error("Could not request a reset link right now. Please try again later.")
-        with st.expander("Reset link opened the home page?"):
-            st.write("Request a fresh email. Before opening its reset link, right-click the link (or long-press on a phone) and choose Copy link address. Paste that link and your account email here. Do not share the link.")
-            with st.form("paste_recovery_link"):
-                link_email = st.text_input("Account email", max_chars=254, key="link_email")
-                email_link = st.text_input("Reset link copied from email", type="password")
-                use_link = st.form_submit_button("Continue to new password")
-            if use_link:
-                token_hash = recovery_hash_from_email_link(email_link.strip(), st.secrets["SUPABASE_URL"])
-                if token_hash and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", link_email.strip()):
-                    try:
-                        response = db.auth.verify_otp({
-                            "email": link_email.strip(), "token_hash": token_hash, "type": "recovery",
-                        })
-                        if not response.session:
-                            raise ValueError("Recovery session was not created")
-                        st.session_state.recovery_tokens = {
-                            "access_token": response.session.access_token,
-                            "refresh_token": response.session.refresh_token,
-                        }
-                        st.rerun()
-                    except Exception:
-                        st.info("This link has expired or was already used. Request a new reset email and copy its link before opening it.")
-                else:
-                    st.info("Enter your account email and the original reset link copied from the email.")
-
-
     st.markdown("**Confirmation email expired?**")
     resend_email = st.text_input("Account email", key="resend_email")
     if st.button("Resend confirmation email"):
