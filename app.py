@@ -1,5 +1,6 @@
 import re
 import json
+import base64
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from html import escape
@@ -463,7 +464,7 @@ class EmailStageError(Exception):
         super().__init__(str(original))
 
 
-def send_email(to_address, subject, body, idempotency_key=None):
+def send_email(to_address, subject, body, idempotency_key=None, attachments=None):
     if st.secrets.get("RESEND_API_KEY"):
         sender = st.secrets.get("RESEND_FROM_EMAIL")
         if not sender:
@@ -475,9 +476,16 @@ def send_email(to_address, subject, body, idempotency_key=None):
         }
         if idempotency_key:
             headers["Idempotency-Key"] = idempotency_key
+        payload = {"from": sender,
+                   "to": to_address if isinstance(to_address, list) else [to_address],
+                   "subject": subject, "text": body}
+        if attachments:
+            payload["attachments"] = [
+                {"filename": filename, "content": base64.b64encode(content).decode("ascii")}
+                for filename, content in attachments
+            ]
         request = Request("https://api.resend.com/emails",
-            data=json.dumps({"from": sender, "to": [to_address],
-                             "subject": subject, "text": body}).encode("utf-8"),
+            data=json.dumps(payload).encode("utf-8"),
             headers=headers, method="POST")
         try:
             with urlopen(request, timeout=15) as response:
@@ -503,8 +511,10 @@ def send_email(to_address, subject, body, idempotency_key=None):
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = st.secrets["SMTP_FROM"]
-    msg["To"] = to_address
+    msg["To"] = ", ".join(to_address) if isinstance(to_address, list) else to_address
     msg.set_content(body)
+    for filename, content in attachments or []:
+        msg.add_attachment(content, maintype="text", subtype="calendar", filename=filename)
     host = st.secrets["SMTP_HOST"]
     port = int(st.secrets["SMTP_PORT"])
     stage = "connect"
@@ -551,30 +561,46 @@ def parse_meeting_time(value):
     return instant.astimezone(timezone.utc)
 
 
+def meeting_call_url(row):
+    if row.get("format") == "online":
+        return "https://meet.jit.si/OctaMatchmaking" + row["id"].replace("-", "")
+    return APP_URL
+
+
 def calendar_invitation(row):
     def escape(value):
-        return str(value).replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
+        return str(value).replace("\r\n", "\n").replace("\r", "\n").replace("\\", "\\\\").replace("\n", "\\n").replace(",", "\\,").replace(";", "\\;")
 
     def stamp(value):
         return parse_meeting_time(value).strftime("%Y%m%dT%H%M%SZ")
 
-    url = "https://meet.jit.si/OctaMatchmaking" + row["id"].replace("-", "")
-    details = escape((row.get("purpose") or "") + "\nVideo call: " + url)
+    url = meeting_call_url(row)
+    details = escape((row.get("purpose") or "") + "\nMeeting link: " + url)
     lines = [
         "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//OctaInsight//Matchmaking//EN",
         "CALSCALE:GREGORIAN", "METHOD:PUBLISH", "BEGIN:VEVENT",
         "UID:" + row["id"] + "@octa-matchmaking.streamlit.app",
-        "DTSTAMP:" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"),
+        "DTSTAMP:" + stamp(row.get("created_at") or row["proposed_start"]),
         "DTSTART:" + stamp(row["proposed_start"]),
         "DTEND:" + stamp(row["proposed_end"]),
-        "SUMMARY:Octa Matchmaking meeting", "DESCRIPTION:" + details,
+        "SUMMARY:Octa Matchmaking meeting", "STATUS:CONFIRMED", "SEQUENCE:0", "DESCRIPTION:" + details,
         "URL:" + url,
         "BEGIN:VALARM", "ACTION:DISPLAY",
         "DESCRIPTION:Your Octa Matchmaking meeting starts in one hour",
         "TRIGGER:-PT1H", "END:VALARM",
         "END:VEVENT", "END:VCALENDAR",
     ]
-    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+    # RFC 5545: fold long content lines at 75 octets without splitting UTF-8.
+    folded = []
+    for line in lines:
+        part = ""
+        for char in line:
+            if len((part + char).encode("utf-8")) > 75:
+                folded.append(part)
+                part = " "
+            part += char
+        folded.append(part)
+    return ("\r\n".join(folded) + "\r\n").encode("utf-8")
 
 
 def send_booking_email(db, recipient_name, start, end, meeting_id):
@@ -621,6 +647,45 @@ def send_invitation_email(db, uid, meeting_id):
         f"{pending}\n\nOpen the app, sign in and select My meetings to accept or decline. "
         "The app displays the time in your browser's time zone.\n\n" + APP_URL,
         idempotency_key=f"meeting-{meeting_id}-invitation")
+
+
+def send_acceptance_email(db, uid, meeting_id):
+    # Only the accepting recipient may notify participants of a saved acceptance.
+    account = db.auth.get_user().user
+    rows = db.table("meeting_requests").select("*").eq("id", meeting_id).eq(
+        "recipient_id", uid).eq("status", "accepted").execute().data or []
+    if not account or account.id != uid or not rows:
+        raise ValueError("Could not verify the accepted meeting.")
+    row = rows[0]
+    key = st.secrets.get("SUPABASE_SECRET_KEY") or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not key:
+        raise ValueError("Acceptance emails require the server-side Supabase admin key.")
+    admin = create_client(st.secrets["SUPABASE_URL"], key,
+        options=SyncClientOptions(auto_refresh_token=False, persist_session=False))
+    people = []
+    for person_id in (row["requester_id"], row["recipient_id"]):
+        person = admin.auth.admin.get_user_by_id(person_id).user
+        if not person or not person.email:
+            raise ValueError("A meeting participant has no email address.")
+        people.append(person.email)
+    profiles = db.table("profiles").select("full_name").eq("id", uid).execute().data or []
+    name = profiles[0].get("full_name") if profiles else None
+    body = (
+        f"{name or 'The recipient'} has accepted the matchmaking meeting.\n\n"
+        f"Purpose: {row['purpose']}\n\n"
+        f"Start: {display_meeting_time(row['proposed_start'], timezone.utc)}\n"
+        f"End: {display_meeting_time(row['proposed_end'], timezone.utc)}\n\n"
+        f"Meeting link: {meeting_call_url(row)}\n\n"
+        "Open the attached calendar invitation to add the meeting to your calendar. "
+        "Your calendar displays the time in its local time zone and includes a one-hour reminder.\n\n"
+    )
+    if row.get("format") == "online":
+        body += "The first participant must log in to Jitsi to start the room; the other can then join.\n\n"
+    body += "Manage this meeting in My meetings: " + APP_URL
+    # One provider request notifies both parties with the same event and link.
+    return send_email(list(dict.fromkeys(people)), "Matchmaking meeting accepted",
+        body, idempotency_key=f"meeting-{meeting_id}-accepted",
+        attachments=[(f"octa-meeting-{meeting_id}.ics", calendar_invitation(row))])
 
 
 def smtp_issue(exc):
@@ -890,6 +955,9 @@ def directory(db, uid):
 
 def meetings(db, uid):
     st.subheader("Meeting requests")
+    notice = st.session_state.pop("meeting_email_notice", None)
+    if notice:
+        st.info(notice)
     try:
         rows = db.table("meeting_requests").select("*").order("proposed_start").execute().data
         abstracts = db.table("submissions").select("id,title").execute().data
@@ -910,20 +978,37 @@ def meetings(db, uid):
             if row["status"] == "accepted":
                 st.download_button("Add to calendar (reminder 1 hour before)", calendar_invitation(row), file_name=f"octa-meeting-{row['id']}.ics", mime="text/calendar", key=f"calendar_{row['id']}")
             if row["status"] == "accepted" and row.get("format") == "online":
-                room = "OctaMatchmaking" + row["id"].replace("-", "")
-                call_url = "https://meet.jit.si/" + room
+                call_url = meeting_call_url(row)
                 st.link_button("Open full Jitsi call", call_url)
                 st.caption("The first participant must use Jitsi's Log-in button to start the room. The other participant can then join.")
+            if row["status"] == "accepted" and row["recipient_id"] == uid:
+                if st.button("Retry acceptance emails", key=f"retry_accept_email_{row['id']}"):
+                    try:
+                        send_acceptance_email(db, uid, row["id"])
+                        st.success("Acceptance emails accepted by the email provider.")
+                    except Exception as exc:
+                        st.info(smtp_issue(exc))
+                st.caption("Use retry only if delivery failed. Resend suppresses duplicate acceptance emails within 24 hours.")
             if row.get("private_message"):
                 st.write("Private message:", row["private_message"])
             if row["recipient_id"] == uid and row["status"] == "pending":
                 left, right = st.columns(2)
                 if left.button("Accept", key=f"accept_{row['id']}"):
                     try:
-                        db.table("meeting_requests").update({"status": "accepted"}).eq("id", row["id"]).execute()
-                        st.rerun()
+                        accepted = db.table("meeting_requests").update({"status": "accepted"}).eq(
+                            "id", row["id"]).eq("recipient_id", uid).eq("status", "pending").execute()
                     except Exception as exc:
                         st.error(f"Could not accept request: {exc}")
+                    else:
+                        if accepted.data:
+                            try:
+                                send_acceptance_email(db, uid, row["id"])
+                                st.session_state.meeting_email_notice = "Meeting accepted. Confirmation emails with a meeting link and calendar attachment were accepted by the email provider for both participants."
+                            except Exception as exc:
+                                st.session_state.meeting_email_notice = "Meeting accepted, but confirmation emails could not be sent. " + smtp_issue(exc)
+                        else:
+                            st.session_state.meeting_email_notice = "This request is no longer pending. Refresh its status in My meetings."
+                        st.rerun()
                 if right.button("Decline", key=f"decline_{row['id']}"):
                     try:
                         db.table("meeting_requests").update({"status": "declined"}).eq("id", row["id"]).execute()
