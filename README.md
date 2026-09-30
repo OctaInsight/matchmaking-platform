@@ -48,7 +48,7 @@ Project owners submit project ideas, oral presentations or posters with status `
 
 ## Staying signed in
 
-Session restoration through the cookie component is temporarily disabled while the public gallery is stabilised. A full browser refresh signs users out; they can sign in again from the sidebar. The `COOKIE_PASSWORD` secret is currently unused.
+Run [persistent_sessions_setup.sql](persistent_sessions_setup.sql) once in Supabase SQL Editor. The existing server-side Supabase secret key enables encrypted session storage; no new secret is required. Login survives refreshes and closing/reopening the browser for eight hours after the last app interaction. Each app interaction renews the idle timeout. Explicit sign-out removes the stored session and clears the browser cookie. Cookies contain only a random session ID, while access/refresh tokens are encrypted in a private database table accessible only to the service role. Changing the server key invalidates saved sessions. Browser settings that block cookies require signing in again after refresh. The old `COOKIE_PASSWORD` setting is unused.
 
 ## Password recovery
 
