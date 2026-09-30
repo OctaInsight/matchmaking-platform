@@ -16,6 +16,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
+from persistent_sessions import SessionStore
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
@@ -72,12 +73,71 @@ def sidebar_footer():
     st.sidebar.caption("© 2026 Octa Insight AS")
 
 
-def remember_tokens(tokens):
+login_cookie = components.declare_component(
+    "login_cookie", path=str(Path(__file__).parent / "login_cookie")
+)
+_session_store = None
+
+
+def session_store():
+    global _session_store
+    if _session_store is None:
+        key = st.secrets.get("SUPABASE_SECRET_KEY") or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+        if not key:
+            return None
+        admin = create_client(st.secrets["SUPABASE_URL"], key,
+            options=SyncClientOptions(auto_refresh_token=False, persist_session=False))
+        _session_store = SessionStore(admin, key)
+    return _session_store
+
+
+def sync_login_cookie():
+    sid = st.session_state.get("login_session_id")
+    command = ({"action": "clear", "id": "logout"} if st.session_state.get("cookie_logout")
+        else {"action": "set", "value": sid, "id": sid} if sid else {})
+    result = login_cookie(command=command, default=None, key="login_cookie")
+    if result is None and not st.session_state.get("skip_login_cookie"):
+        st.info("Checking your saved sign-in…")
+        if st.button("Continue without remembering sign-in"):
+            st.session_state.skip_login_cookie = True
+            st.rerun()
+        st.stop()
+    if result and not result.get("available", True):
+        st.session_state.session_warning = "This browser blocked the sign-in cookie. Refreshes may require signing in again."
+    if result and not sid and not st.session_state.get("cookie_logout"):
+        value = result.get("value", "")
+        if len(value) == 64:
+            st.session_state.login_session_id = value
+
+
+def remember_tokens(tokens, uid):
     st.session_state.tokens = tokens
+    st.session_state.cookie_logout = False
+    try:
+        store = session_store()
+        if store:
+            sid = store.save(tokens, uid, st.session_state.get("login_session_id"))
+            st.session_state.login_session_id = sid
+            st.session_state.pop("session_warning", None)
+        else:
+            st.session_state.session_warning = "Saved sign-in needs the server-side Supabase admin key."
+    except ValueError:
+        raise
+    except Exception:
+        st.session_state.session_warning = "Saved sign-in is not configured. Run persistent_sessions_setup.sql in Supabase SQL Editor."
 
 
 def forget_tokens():
+    sid = st.session_state.pop("login_session_id", None)
     st.session_state.pop("tokens", None)
+    st.session_state.cookie_logout = True
+    if sid:
+        try:
+            store = session_store()
+            if store:
+                store.revoke(sid)
+        except Exception:
+            pass
 
 
 
@@ -91,6 +151,19 @@ def client():
         st.stop()
     db = create_client(url, key)
     tokens = st.session_state.get("tokens")
+    sid = st.session_state.get("login_session_id")
+    if sid:
+        try:
+            store = session_store()
+            record = store.read(sid) if store else None
+            if not record:
+                forget_tokens()
+                tokens = None
+            else:
+                tokens = record["tokens"]
+        except Exception:
+            forget_tokens()
+            tokens = None
     if tokens:
         try:
             response = db.auth.set_session(tokens["access_token"], tokens["refresh_token"])
@@ -98,7 +171,7 @@ def client():
                 remember_tokens({
                     "access_token": response.session.access_token,
                     "refresh_token": response.session.refresh_token,
-                })
+                }, response.session.user.id)
         except Exception:
             forget_tokens()
             st.rerun()
@@ -176,7 +249,7 @@ def auth_screen(db):
                 remember_tokens({
                     "access_token": res.session.access_token,
                     "refresh_token": res.session.refresh_token,
-                })
+                }, res.session.user.id)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Sign in failed: {exc}")
@@ -198,7 +271,7 @@ def auth_screen(db):
                         remember_tokens({
                             "access_token": res.session.access_token,
                             "refresh_token": res.session.refresh_token,
-                        })
+                        }, res.session.user.id)
                         st.rerun()
                     st.success("Account created. Check your email to confirm it, then sign in.")
                 except Exception as exc:
@@ -1133,6 +1206,7 @@ def available_events(db):
 
 
 
+sync_login_cookie()
 db = client()
 if st.session_state.get("removal_notice"):
     st.success(st.session_state.pop("removal_notice"))
@@ -1168,6 +1242,9 @@ if not uid:
 
 with st.sidebar:
     st.write("Signed in")
+    st.caption("Sign-in expires after 8 hours without activity.")
+    if st.session_state.get("session_warning"):
+        st.info(st.session_state.session_warning)
     with st.expander("Change my password"):
         with st.form("change_account_password", clear_on_submit=True):
             new_password = st.text_input("New password (at least 8 characters)", type="password", key="account_new_password")
