@@ -50,6 +50,14 @@ Project owners submit project ideas, oral presentations or posters with status `
 
 Run [persistent_sessions_setup.sql](persistent_sessions_setup.sql) once in Supabase SQL Editor. The existing server-side Supabase secret key enables encrypted session storage; no new secret is required. Login survives refreshes and closing/reopening the browser for eight hours after the last app interaction. Each app interaction renews the idle timeout. Explicit sign-out removes the stored session and clears the browser cookie. Cookies contain only a random session ID, while access/refresh tokens are encrypted in a private database table accessible only to the service role. Changing the server key invalidates saved sessions. Browser settings that block cookies require signing in again after refresh. The old `COOKIE_PASSWORD` setting is unused.
 
+## Live meeting alerts
+
+Signed-in participants see incoming invitation counts and meetings in the next 24 hours directly below their name in the sidebar. A prominent main-page banner shows pending invitations and upcoming accepted meetings. A Streamlit fragment checks every 30 seconds while the browser session is connected; it updates only the alert area and does not reload forms or renew the eight-hour idle login. Alerts are explicitly scoped to the signed-in participant, including super admins. Accepted meetings still in progress are included until their end time.
+
+New invitations, newly accepted meetings and meetings entering the 24-hour window trigger balloons and a toast once per event in the current browser session. **Enable notification sound** is optional and requires a click in the browser. It plays a test ping, then a short ping for new alerts; **Mute notification sound** turns it off. Refreshing/reopening the page may require enabling sound again. Browser autoplay/iframe restrictions can block sound; the visual alerts continue to work. Alerts are not background notifications when the app is closed. No database migration is needed.
+
+References: [Streamlit fragments](https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment), [browser audio autoplay policy](https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Autoplay).
+
 ## Password recovery
 
 Admin-assigned passwords are normal sign-in passwords: they do not expire and no forced change is applied. Signed-in participants can optionally use **Change my password** in the sidebar to choose another password.
