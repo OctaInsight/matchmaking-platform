@@ -788,7 +788,81 @@ def meetings(db, uid):
                         st.error(f"Could not cancel request: {exc}")
 
 
+def manage_submission_content(db, event):
+    with st.expander("Remove submissions, posters or videos"):
+        try:
+            rows = db.rpc("platform_admin_submissions", {"p_event_id": event["id"]}).execute().data or []
+        except Exception:
+            st.info("Run admin_removal_setup.sql in Supabase SQL Editor to enable removal tools.")
+            return
+        if not rows:
+            st.info("No submissions in this event.")
+            return
+        with st.form("remove_content_" + event["id"]):
+            item = st.selectbox("Submission", rows, format_func=lambda r: r["title"] + " · " + r["status"])
+            action = st.selectbox("Remove", ["Entire abstract / submission", "Poster link only", "Video link only"])
+            st.caption("Deleting the entire submission also removes its comments, replies and associated meetings. Removing a link does not delete the externally hosted file.")
+            confirmed = st.checkbox("I confirm this removal")
+            remove = st.form_submit_button("Remove selected content")
+        if remove:
+            if not confirmed:
+                st.info("Confirm the removal first.")
+                return
+            try:
+                db.rpc("platform_remove_submission_content", {
+                    "p_submission_id": item["id"],
+                    "p_action": {"Entire abstract / submission": "submission", "Poster link only": "poster", "Video link only": "video"}[action],
+                }).execute()
+                st.session_state.removal_notice = "Selected content removed."
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not remove content: {exc}")
+
+
+def super_remove_accounts_events(db, events):
+    with st.expander("Delete a user account"):
+        try:
+            users = db.rpc("platform_admin_users").execute().data or []
+        except Exception:
+            st.info("Run admin_removal_setup.sql in Supabase SQL Editor to enable removal tools.")
+            users = []
+        if users:
+            with st.form("remove_user"):
+                person = st.selectbox("User to remove", users, format_func=lambda u: (u.get("full_name") or "Participant") + " · " + (u.get("email") or u["user_id"]))
+                st.caption("This permanently deletes the account, its submissions, comments, replies and meetings. The super admin account is protected.")
+                confirmation = st.text_input("Type the user's email to confirm")
+                remove_user = st.form_submit_button("Permanently delete user")
+            if remove_user:
+                if not person.get("email") or confirmation.strip().lower() != person["email"].lower():
+                    st.info("Enter the selected user's email exactly.")
+                else:
+                    try:
+                        db.rpc("platform_remove_user", {"p_user_id": person["user_id"]}).execute()
+                        st.session_state.removal_notice = "User account and associated app data removed."
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not remove user. The database operation was rolled back: {exc}")
+    if events:
+        with st.expander("Delete an event"):
+            with st.form("remove_event"):
+                event = st.selectbox("Event to remove", events, format_func=lambda e: e["title"])
+                st.caption("This permanently deletes the event, all its submissions and their comments and meetings. Participant accounts remain.")
+                confirmation = st.text_input("Type the event title to confirm")
+                remove_event = st.form_submit_button("Permanently delete event")
+            if remove_event:
+                if confirmation.strip() != event["title"]:
+                    st.info("Enter the selected event title exactly.")
+                else:
+                    try:
+                        db.rpc("platform_remove_event", {"p_event_id": event["id"]}).execute()
+                        st.session_state.removal_notice = "Event and associated submissions removed."
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Could not remove event: {exc}")
+
+
 def review_event(db, event):
+    manage_submission_content(db, event)
     st.subheader("Review: " + event["title"])
     try:
         items = db.rpc("platform_review_queue", {"p_event_id": event["id"]}).execute().data or []
@@ -948,6 +1022,7 @@ def admin_content(db, events):
 
 def super_dashboard(db, events):
     st.subheader("Super admin dashboard")
+    super_remove_accounts_events(db, events)
     admin_content(db, events)
     st.markdown("**Test the Jitsi video call**")
     if "demo_jitsi_room" not in st.session_state:
@@ -1059,6 +1134,8 @@ def available_events(db):
 
 
 db = client()
+if st.session_state.get("removal_notice"):
+    st.success(st.session_state.pop("removal_notice"))
 if not st.session_state.get("recovery_tokens"):
     callback_url = read_recovery_fragment(default=None, key="recovery_fragment")
     if callback_url:
