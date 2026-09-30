@@ -15,7 +15,7 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 from supabase import create_client
-from supabase.lib.client_options import ClientOptions
+from supabase.lib.client_options import SyncClientOptions
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
@@ -843,10 +843,11 @@ def admin_content(db, events):
     try:
         admin = create_client(
             st.secrets["SUPABASE_URL"], secret_key,
-            options=ClientOptions(auto_refresh_token=False, persist_session=False),
+            options=SyncClientOptions(auto_refresh_token=False, persist_session=False),
         )
-    except Exception:
-        st.error("The Supabase admin key could not be used. Check the server-side Streamlit Secret.")
+    except Exception as exc:
+        st.error("Could not initialize the Supabase admin connection. No account was created.")
+        st.caption("Diagnostic: " + type(exc).__name__)
         return
     with st.expander("Create a participant account"):
         st.caption("Set a normal sign-in password. The participant can keep it or change it from their account. Share it privately.")
