@@ -32,6 +32,22 @@ The super admin can create a participant account with a password and add an abst
 
 Participants can switch between Project owner, Investor and Audience at any time from the sidebar. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
 
+## Bulk Excel import (Super admin)
+
+Open **Super admin → Bulk upload users and abstracts from Excel** and select **Download Excel import template**. The Import sheet uses the same participant/submission fields as the existing forms; Instructions explains each field. Only Participant name (also accepted as Username) and Participant email (also accepted as Email) are required. The email remains the sign-in username.
+
+Use name/email only for users; fill submission fields to add contributions for existing accounts, new accounts, or both. New accounts use the supplied password or generate a random password when blank. Confirm password is optional; if supplied it must match. Existing accounts retain their passwords, profiles and participant roles. New participants default to Project owner. No passwords are saved in public application tables.
+
+Event cells may contain an event ID or unique event title, or be blank to use the default event selected in the panel. Blank category defaults to Project idea. Blank Publish immediately sends the contribution for review; Yes publishes only when title and abstract are present. Missing titles get Contribution by [name]; missing abstracts get a labelled placeholder, and incomplete contributions stay unpublished for review. A provided title must have at least five characters and an abstract 30–8,000 characters. Public poster/video HTTPS links, thematic area, short summary, keywords and support request are optional.
+
+Upload at most 500 filled rows in a .xlsx file under 10 MB, then **Validate and preview import**. The preview hides passwords and performs no writes. Fix any validation errors before proceeding. Verify email ownership for new participants and confirm the preview, then **Import previewed rows**.
+
+The result table reports successes and errors per row. Accounts and submissions are separate operations: completed steps remain saved if a later step fails. Retry by previewing the file again. Identical bulk-imported contribution content has a deterministic primary key and is skipped, including during concurrent/retried inserts. Changing content creates a new contribution; the importer does not edit existing submissions.
+
+Download the private new-account credentials CSV before closing the session and share credentials privately. Imported accounts are confirmed after organiser verification; the importer does not send welcome emails. Use **Clear import results and passwords from this session** after saving the credentials. The template is bundled with the code. No database migration is required.
+
+Run local validation tests with `python -m unittest test_bulk_import.py`. These use a fake Supabase service, not live participant accounts. Account creation uses the [Supabase Auth Admin API](https://supabase.com/docs/reference/python/auth-admin-createuser).
+
 ## Streamlit deployment
 
 Deploy `app.py` from branch `main`. In **App settings → Secrets**:
