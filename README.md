@@ -77,3 +77,7 @@ Port 587 uses STARTTLS; port 465 uses TLS from connection start. The sender addr
 ## Jitsi calls
 
 When a recipient accepts an online meeting request, both participants see the same private-looking, hard-to-guess Jitsi room in **My meetings**. They open the full call in a new tab. The first participant must sign in with Jitsi's Log-in button to start the room; the other can then join. Public meet.jit.si embedded calls are demo-only and disconnect after five minutes, so the app does not embed them. An in-app production call would require Jitsi as a Service or a self-hosted Jitsi deployment. Anyone given the room URL can join, so share it only with the intended participants.
+
+## Admin removal tools
+
+Run [admin_removal_setup.sql](admin_removal_setup.sql) in the existing Supabase SQL Editor. Event admins can remove a whole submission or just its poster/video link within their assigned events, including approved submissions. Super admins have the same powers for all events and can delete an event or user. Each destructive action requires confirmation. An event deletion removes its submissions and associated comments/meetings while preserving participant accounts. A user deletion removes their account, owned submissions, authored comments/replies and meetings. The super-admin account cannot be deleted. SQL operations are transactional: unexpected foreign-key dependencies roll back the operation. External poster/video files are never deleted from their hosts.
