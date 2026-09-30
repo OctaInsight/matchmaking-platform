@@ -21,6 +21,7 @@ import streamlit.components.v1 as components
 from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
 from persistent_sessions import SessionStore
+from bulk_import_ui import bulk_import_panel
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
@@ -1116,6 +1117,7 @@ def admin_content(db, events):
         st.error("Could not initialize the Supabase admin connection. No account was created.")
         st.caption("Diagnostic: " + type(exc).__name__)
         return
+    bulk_import_panel(db, admin, events)
     with st.expander("Create a participant account"):
         st.caption("Set a normal sign-in password. The participant can keep it or change it from their account. Share it privately.")
         with st.form("admin_create_participant", clear_on_submit=True):
