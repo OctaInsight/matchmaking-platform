@@ -1298,6 +1298,19 @@ if not is_super:
         st.error(f"Could not check event permissions: {exc}")
         st.stop()
 
+role_options = {"Project owner": "project_owner", "Investor": "investor", "Audience": "audience"}
+role_labels = list(role_options)
+current_label = next(label for label, value in role_options.items() if value == kind)
+chosen_label = st.sidebar.selectbox("Act as", role_labels, index=role_labels.index(current_label))
+if role_options[chosen_label] != kind:
+    try:
+        db.table("platform_user_types").update({
+            "user_type": role_options[chosen_label],
+        }).eq("user_id", uid).execute()
+        st.rerun()
+    except Exception as exc:
+        st.sidebar.error(f"Could not switch role: {exc}")
+
 try:
     incoming = db.table("meeting_requests").select("id", count="exact").eq("recipient_id", uid).eq("status", "pending").execute()
     if incoming.count:
