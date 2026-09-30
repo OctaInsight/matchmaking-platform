@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Login session</title></head><body style="margin:0"><script>
+const cookieName = "__Host-octa_login";
+const send = (type, payload={}) => window.parent.postMessage({isStreamlitMessage:true,type,...payload},"*");
+let lastResult = "";
+window.addEventListener("message", event => {
+  if (event.data?.type !== "streamlit:render") return;
+  send("streamlit:setFrameHeight", {height:0});
+  const command = event.data.args.command || {};
+  try {
+    const doc = window.top.document;
+    if (command.action === "set") doc.cookie = cookieName + "=" + encodeURIComponent(command.value) + "; Max-Age=28800; Path=/; Secure; SameSite=Lax";
+    if (command.action === "clear") doc.cookie = cookieName + "=; Max-Age=0; Path=/; Secure; SameSite=Lax";
+    const match = doc.cookie.split("; ").find(row => row.startsWith(cookieName + "="));
+    const value = match ? decodeURIComponent(match.slice(cookieName.length+1)) : "";
+    const result = {ready:true,value,command_id:command.id || "",available: command.action !== "set" || value === command.value};
+    const encoded = JSON.stringify(result);
+    if (encoded !== lastResult) { lastResult = encoded; send("streamlit:setComponentValue",{value:result,dataType:"json"}); }
+  } catch (_) {
+    const result = {ready:true,value:"",command_id:command.id || "",available:false};
+    const encoded = JSON.stringify(result);
+    if(encoded !== lastResult){lastResult=encoded;send("streamlit:setComponentValue",{value:result,dataType:"json"});}
+  }
+});
+send("streamlit:componentReady",{apiVersion:1});
+</script></body></html>
