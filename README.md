@@ -6,7 +6,7 @@ Streamlit application for event-based project ideas, oral presentations, posters
 
 | Role | What they can do |
 | --- | --- |
-| Super admin | Only the verified Supabase account `octainsight@gmail.com`: create events, participant accounts with temporary passwords, and submissions on behalf of authors; assign/remove event sub-admins, review any event, and assign older abstracts to an event. |
+| Super admin | Only the verified Supabase account `octainsight@gmail.com`: create events, participant accounts with passwords, and submissions on behalf of authors; assign/remove event sub-admins, review any event, and assign older abstracts to an event. |
 | Event sub-admin | One or more registered users per event: review that event's submitted abstracts and approve or reject them. |
 | Project owner | Select an event, submit an abstract, browse approved abstracts, comment and request meetings with any participant. |
 | Investor | Browse approved abstracts, comment and request meetings with any participant. |
@@ -28,7 +28,7 @@ The earlier global-admin setup has been removed. If you ran it earlier, this mig
 
 Sign in to the app as `octainsight@gmail.com`, open **Super admin**, create an event, then enter the registered email address of each person who should be its sub-admin. Sub-admins can review only their assigned events. Older submitted abstracts can be assigned to an event on this page.
 
-The super admin can create a participant account with a temporary password and add an abstract with optional poster and video links for that author. Confirm that the email belongs to the participant before marking the account as confirmed. Share the temporary password privately; the app does not email it. The submission can be published immediately or sent to the event review queue. These admin tools use a separate server-side Supabase client and do not require a database migration.
+The super admin can create a participant account with a password and add an abstract with optional poster and video links for that author. Confirm that the email belongs to the participant before marking the account as confirmed. Share the password privately; the app does not email it. The submission can be published immediately or sent to the event review queue. These admin tools use a separate server-side Supabase client and do not require a database migration.
 
 Participants can switch between Project owner, Investor and Audience at any time from the sidebar. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
 
@@ -51,6 +51,8 @@ Project owners submit project ideas, oral presentations or posters with status `
 Session restoration through the cookie component is temporarily disabled while the public gallery is stabilised. A full browser refresh signs users out; they can sign in again from the sidebar. The `COOKIE_PASSWORD` secret is currently unused.
 
 ## Password recovery
+
+Admin-assigned passwords are normal sign-in passwords: they do not expire and no forced change is applied. Signed-in participants can optionally use **Change my password** in the sidebar to choose another password.
 
 The email address is the sign-in name. **Sign in or create account → Forgot password** requests a standard Supabase password reset link. The response is intentionally the same whether the address has an account, to avoid exposing the list of registered participants. Supabase's default email template is supported: after its link returns to the app, the small `recovery_fragment` browser component reads the recovery session in the URL fragment, clears the fragment, and opens the new-password form. If browser restrictions prevent automatic capture, the user can request a fresh email and copy its original link (without opening it) into the fallback form under Forgot password, along with their account email. The fallback validates the Supabase host and recovery type and verifies the token hash. Older token-hash recovery links are still accepted if already configured.
 
