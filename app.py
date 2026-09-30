@@ -849,13 +849,13 @@ def admin_content(db, events):
         st.error("The Supabase admin key could not be used. Check the server-side Streamlit Secret.")
         return
     with st.expander("Create a participant account"):
-        st.caption("Set a temporary password and share it with the participant through a private channel. The app does not email or display it again.")
+        st.caption("Set a normal sign-in password. The participant can keep it or change it from their account. Share it privately.")
         with st.form("admin_create_participant", clear_on_submit=True):
             name = st.text_input("Participant name", max_chars=120)
             email = st.text_input("Participant email", max_chars=254)
             organisation = st.text_input("Organisation", max_chars=160)
-            password = st.text_input("Temporary password (at least 8 characters)", type="password")
-            confirm = st.text_input("Confirm temporary password", type="password")
+            password = st.text_input("Password (at least 8 characters)", type="password")
+            confirm = st.text_input("Confirm password", type="password")
             verified = st.checkbox("I verified that this email belongs to the participant")
             create = st.form_submit_button("Create participant")
         if create:
@@ -885,7 +885,7 @@ def admin_content(db, events):
                         admin.table("platform_user_types").upsert({
                             "user_id": uid, "user_type": "project_owner",
                         }, on_conflict="user_id").execute()
-                        st.success(f"Account created for {email.strip()}. They can sign in with the temporary password. Select them in Add a submission below.")
+                        st.success(f"Account created for {email.strip()}. They can sign in with the password. Select them in Add a submission below.")
                     except Exception as exc:
                         st.error(f"Account was created for {email.strip()}, but its profile could not be saved: {exc}. Do not create the account again.")
 
@@ -1090,6 +1090,20 @@ if not uid:
 
 with st.sidebar:
     st.write("Signed in")
+    with st.expander("Change my password"):
+        with st.form("change_account_password", clear_on_submit=True):
+            new_password = st.text_input("New password (at least 8 characters)", type="password", key="account_new_password")
+            confirm_password = st.text_input("Confirm new password", type="password", key="account_confirm_password")
+            change_password = st.form_submit_button("Change password")
+        if change_password:
+            if len(new_password) < 8 or new_password != confirm_password:
+                st.info("Use at least 8 characters and enter the same password twice.")
+            else:
+                try:
+                    db.auth.update_user({"password": new_password})
+                    st.success("Password changed. Use your new password next time you sign in.")
+                except Exception:
+                    st.error("Could not change the password. Sign out, sign in again, and retry.")
     if st.button("Sign out"):
         try:
             db.auth.sign_out()
