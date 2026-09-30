@@ -77,6 +77,14 @@ Verify the sender domain in Resend and give the key sending access to that domai
 
 In **Super admin → Email diagnostics**, use **Send test email to me**. A success means the provider accepted the email, not that inbox delivery is guaranteed. Check the inbox/spam folder and Resend dashboard for delivery status. Next, create a meeting request between two controlled participant accounts and check the recipient invitation, pending count and requester confirmation. On a provider limit or error, the request remains available in My meetings; the app does not retry automatically.
 
+### Accepted-meeting notifications
+
+When the recipient accepts a pending request, the app first saves the acceptance and then emails both participants. The email contains the accepting participant’s name, purpose, UTC start/end time, the same Jitsi link shown in My meetings, and an attached .ics calendar event with a one-hour reminder. Calendar clients convert its UTC times to their configured local time zone. The attachment is an add-to-calendar event; participants open/import it, and calendar replies do not change the app’s meeting status.
+
+Only the saved meeting’s authenticated recipient can trigger acceptance notifications. A conditional pending-to-accepted update avoids sending again from a stale Accept button. If sending fails, the acceptance remains saved; the recipient can use **Retry acceptance emails** on the accepted meeting. Resend suppresses repeat submissions with the same acceptance idempotency key for 24 hours. SMTP retries or retries after that period may send another email. No database migration is needed.
+
+To test: create a future meeting between two accounts you control, accept it as the recipient, check both inboxes, open the attachment and verify the time, reminder and call link. Existing accepted meetings are not emailed automatically.
+
 ### SMTP fallback
 
 **Streamlit does not automatically inherit Supabase SMTP settings.** If no Resend key is configured, existing SMTP delivery remains available:
