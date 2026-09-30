@@ -1,4 +1,7 @@
 import re
+import json
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 from html import escape
 from logo_asset import LOGO_BASE64
 import uuid
@@ -447,6 +450,8 @@ def publish(db, uid, events):
 
 
 def smtp_missing_settings():
+    if st.secrets.get("RESEND_API_KEY"):
+        return [] if st.secrets.get("RESEND_FROM_EMAIL") else ["RESEND_FROM_EMAIL"]
     needed = ["SMTP_HOST", "SMTP_PORT", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM"]
     return [name for name in needed if not st.secrets.get(name)]
 
@@ -458,7 +463,40 @@ class EmailStageError(Exception):
         super().__init__(str(original))
 
 
-def send_email(to_address, subject, body):
+def send_email(to_address, subject, body, idempotency_key=None):
+    if st.secrets.get("RESEND_API_KEY"):
+        sender = st.secrets.get("RESEND_FROM_EMAIL")
+        if not sender:
+            raise ValueError("Missing Streamlit Secret: RESEND_FROM_EMAIL")
+        headers = {
+            "Authorization": "Bearer " + st.secrets["RESEND_API_KEY"],
+            "Content-Type": "application/json",
+            "User-Agent": "OctaMatchmaking/1.0",
+        }
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+        request = Request("https://api.resend.com/emails",
+            data=json.dumps({"from": sender, "to": [to_address],
+                             "subject": subject, "text": body}).encode("utf-8"),
+            headers=headers, method="POST")
+        try:
+            with urlopen(request, timeout=15) as response:
+                result = json.load(response)
+            if not result.get("id"):
+                raise ValueError("Resend did not confirm acceptance of the email.")
+            return result["id"]
+        except HTTPError as exc:
+            messages = {
+                401: "Resend rejected the API key. Check RESEND_API_KEY.",
+                403: "Resend denied sending. Verify the sender domain and the API key's sending permission.",
+                422: "Resend rejected the email settings. Check the verified sender address.",
+                429: "Resend's sending limit was reached. Check your Resend dashboard.",
+            }
+            raise ValueError(messages.get(exc.code,
+                f"Resend returned HTTP {exc.code}. Check its dashboard logs.")) from None
+        except (URLError, TimeoutError, OSError):
+            raise ValueError("Could not reach Resend. Check your Resend dashboard before retrying.") from None
+
     missing = smtp_missing_settings()
     if missing:
         raise ValueError("Missing Streamlit Secrets: " + ", ".join(missing))
@@ -539,7 +577,7 @@ def calendar_invitation(row):
     return ("\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
-def send_booking_email(db, recipient_name, start, end):
+def send_booking_email(db, recipient_name, start, end, meeting_id):
     user = db.auth.get_user().user
     if not user or not user.email:
         raise ValueError("Your account has no email address")
@@ -549,8 +587,40 @@ def send_booking_email(db, recipient_name, start, end):
         f"Your meeting request for {recipient_name} has been submitted.\n\n"
         f"Proposed time: {display_meeting_time(start.isoformat(), viewer_timezone())}–"
         f"{end.astimezone(viewer_timezone()).strftime('%H:%M')}\n\n"
-        "The recipient still needs to accept it. You can check its status in My meetings.",
+        "The recipient still needs to accept it. You can check its status in My meetings.\n\n" + APP_URL,
+        idempotency_key=f"meeting-{meeting_id}-confirmation",
     )
+
+
+def send_invitation_email(db, uid, meeting_id):
+    # Authorize against the saved row before using the privileged Auth lookup.
+    rows = db.table("meeting_requests").select("*").eq("id", meeting_id).eq(
+        "requester_id", uid).execute().data or []
+    account = db.auth.get_user().user
+    if not rows or not account or account.id != uid:
+        raise ValueError("Could not verify the saved meeting request.")
+    meeting = rows[0]
+    server_key = st.secrets.get("SUPABASE_SECRET_KEY") or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+    if not server_key:
+        raise ValueError("Recipient notifications require the server-side Supabase admin key.")
+    admin = create_client(st.secrets["SUPABASE_URL"], server_key,
+        options=SyncClientOptions(auto_refresh_token=False, persist_session=False))
+    recipient = admin.auth.admin.get_user_by_id(meeting["recipient_id"]).user
+    if not recipient or not recipient.email:
+        raise ValueError("The recipient has no email address.")
+    count = admin.table("meeting_requests").select("id", count="exact").eq(
+        "recipient_id", meeting["recipient_id"]).eq("status", "pending").execute().count
+    profiles = db.table("profiles").select("full_name").eq("id", uid).execute().data or []
+    name = profiles[0].get("full_name") if profiles else None
+    pending = (f"You currently have {count} pending meeting request(s)."
+               if count is not None else "View your pending requests in My meetings.")
+    send_email(recipient.email, "New matchmaking meeting invitation",
+        f"{name or 'A participant'} has requested a meeting with you.\n\n"
+        f"Purpose: {meeting['purpose']}\n\n"
+        f"Proposed time (UTC): {meeting['proposed_start']} to {meeting['proposed_end']}\n\n"
+        f"{pending}\n\nOpen the app, sign in and select My meetings to accept or decline. "
+        "The app displays the time in your browser's time zone.\n\n" + APP_URL,
+        idempotency_key=f"meeting-{meeting_id}-invitation")
 
 
 def smtp_issue(exc):
@@ -609,7 +679,7 @@ def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None)
         st.info("Add a short reason for the meeting (at least 5 characters).")
         return
     try:
-        db.table("meeting_requests").insert({
+        saved = db.table("meeting_requests").insert({
             "submission_id": submission_id,
             "requester_id": uid, "recipient_id": recipient_id,
             "purpose": purpose.strip(),
@@ -620,12 +690,20 @@ def meeting_form(db, uid, recipient_id, recipient_name, key, submission_id=None)
     except Exception as exc:
         st.error(f"Could not save meeting request: {exc}")
         return
-    try:
-        send_booking_email(db, recipient_name, start, end)
-        st.success("Meeting request saved. A confirmation email was sent to you.")
-    except Exception as exc:
-        st.success("Meeting request saved. You can follow it in My meetings.")
-        st.info("The confirmation email was not sent. " + smtp_issue(exc))
+    st.success("Meeting request saved. You can follow it in My meetings.")
+    if not saved.data:
+        st.info("Email notifications could not be sent because the saved request ID was not returned.")
+        return
+    meeting_id = saved.data[0]["id"]
+    for label, action in [
+        ("Invitation", lambda: send_invitation_email(db, uid, meeting_id)),
+        ("Confirmation", lambda: send_booking_email(db, recipient_name, start, end, meeting_id)),
+    ]:
+        try:
+            action()
+            st.success(label + " email accepted by the email provider.")
+        except Exception as exc:
+            st.info(label + " email could not be sent. " + smtp_issue(exc))
 
 
 def submission_details(db, uid, item):
@@ -1124,7 +1202,10 @@ def super_dashboard(db, events):
     if missing:
         st.info("Booking emails are not configured. Missing Secrets: " + ", ".join(missing))
     else:
-        st.caption(f"Configured host: {st.secrets['SMTP_HOST']} · port: {st.secrets['SMTP_PORT']} · sender: {st.secrets['SMTP_FROM']}")
+        if st.secrets.get("RESEND_API_KEY"):
+            st.caption("Provider: Resend · sender: " + st.secrets["RESEND_FROM_EMAIL"])
+        else:
+            st.caption(f"Configured host: {st.secrets['SMTP_HOST']} · port: {st.secrets['SMTP_PORT']} · sender: {st.secrets['SMTP_FROM']}")
         st.caption("Send a test to your signed-in email to verify delivery.")
         if st.button("Send test email to me"):
             try:
