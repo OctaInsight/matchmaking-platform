@@ -30,7 +30,7 @@ Sign in to the app as `octainsight@gmail.com`, open **Super admin**, create an e
 
 The super admin can create a participant account with a password and add an abstract with optional poster and video links for that author. Confirm that the email belongs to the participant before marking the account as confirmed. Share the password privately; the app does not email it. The submission can be published immediately or sent to the event review queue. These admin tools use a separate server-side Supabase client and do not require a database migration.
 
-Participants choose Project owner, Investor or Audience during initial account setup. The sidebar does not include a role-switching dropdown. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
+Participants can switch between Project owner, Investor and Audience at any time from the sidebar. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
 
 ## Streamlit deployment
 
