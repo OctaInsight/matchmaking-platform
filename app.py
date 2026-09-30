@@ -25,6 +25,9 @@ from persistent_sessions import SessionStore
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
 APP_URL = "https://octa-matchmaking.streamlit.app/"
+meeting_alert_sound = components.declare_component(
+    "meeting_alert_sound", path=str(Path(__file__).parent / "alert_sound")
+)
 read_recovery_fragment = components.declare_component(
     "read_recovery_fragment", path=str(Path(__file__).parent / "recovery_fragment")
 )
@@ -1320,6 +1323,84 @@ def participant_type(db, uid):
     st.stop()
 
 
+def meeting_alert_data(db, uid, now):
+    # Explicitly scope alerts to this participant, including for super admins.
+    rows = db.table("meeting_requests").select(
+        "id,requester_id,recipient_id,status,proposed_start,proposed_end"
+    ).or_(f"requester_id.eq.{uid},recipient_id.eq.{uid}").in_(
+        "status", ["pending", "accepted"]).execute().data or []
+    incoming = [r for r in rows if r["recipient_id"] == uid and r["status"] == "pending"]
+    accepted = [r for r in rows if r["status"] == "accepted"
+                and parse_meeting_time(r["proposed_end"]) > now]
+    soon = [r for r in accepted if parse_meeting_time(r["proposed_start"]) <= now + timedelta(hours=24)]
+    soon.sort(key=lambda r: parse_meeting_time(r["proposed_start"]))
+    signals = {f"invitation:{r['id']}" for r in incoming}
+    signals.update(f"accepted:{r['id']}" for r in accepted)
+    signals.update(f"soon:{r['id']}" for r in soon)
+    return incoming, accepted, soon, signals
+
+
+@st.fragment(run_every="30s")
+def live_meeting_alerts(db, uid, sidebar_slot):
+    # Polling does not renew the eight-hour idle session.
+    sid = st.session_state.get("login_session_id")
+    if sid:
+        try:
+            store = session_store()
+            if store and not store.read(sid):
+                forget_tokens()
+                st.rerun()
+        except Exception:
+            st.caption("Meeting alerts could not verify your session. Refresh to reconnect.")
+            return
+    try:
+        incoming, accepted, soon, signals = meeting_alert_data(db, uid, datetime.now(timezone.utc))
+    except Exception:
+        with sidebar_slot.container():
+            st.caption("Meeting alerts temporarily unavailable.")
+        st.caption("Could not refresh meeting alerts. They will be checked again automatically.")
+        return
+    seen_key = "meeting_alert_seen_" + uid
+    seen = set(st.session_state.get(seen_key, []))
+    fresh = signals - seen
+    st.session_state[seen_key] = list(seen | signals)
+    event_key = "meeting_alert_event_" + uid
+    if fresh:
+        st.session_state[event_key] = st.session_state.get(event_key, 0) + 1
+    with sidebar_slot.container():
+        if incoming:
+            st.warning(f"🔔 {len(incoming)} incoming meeting request(s)")
+        if soon:
+            st.success(f"📅 {len(soon)} meeting(s) in the next 24 hours")
+            for row in soon[:3]:
+                st.caption(display_meeting_time(row["proposed_start"], viewer_timezone()))
+        elif accepted:
+            st.info(f"📅 {len(accepted)} upcoming accepted meeting(s)")
+    if signals:
+        messages = []
+        if incoming:
+            messages.append(f"🔔 {len(incoming)} meeting invitation(s) waiting for your reply")
+        if soon:
+            messages.append(f"📅 {len(soon)} meeting(s) in the next 24 hours")
+        elif accepted:
+            messages.append(f"🤝 {len(accepted)} upcoming accepted meeting(s)")
+        st.markdown(
+            '<div role="status" aria-live="polite" style="background:linear-gradient(120deg,#1c3e82,#075e53);'
+            'color:#fff;border-left:8px solid #ffd166;border-radius:12px;padding:20px 24px;margin:8px 0 12px">'
+            '<div style="font-size:1.65rem;font-weight:900;line-height:1.4">'
+            + '<br>'.join(escape(m) for m in messages)
+            + '</div><div style="font-size:1rem;margin-top:8px">Open <strong>My meetings</strong> in the sidebar for details and meeting links.</div></div>',
+            unsafe_allow_html=True,
+        )
+        if fresh:
+            st.balloons()
+            st.toast("You have a meeting update. Open My meetings.", icon="🔔")
+    meeting_alert_sound(event=st.session_state.get(event_key, 0),
+        has_alerts=bool(signals), key="meeting_sound_" + uid, default=None)
+    st.caption("Meeting alerts update every 30 seconds while this app is connected. Sound is optional.")
+
+
+
 def available_events(db):
     return db.table("platform_events").select("*").order("created_at", desc=True).execute().data or []
 
@@ -1375,6 +1456,7 @@ with st.sidebar:
         + escape(str(welcome_name)) + '</div>',
         unsafe_allow_html=True,
     )
+    meeting_sidebar_slot = st.empty()
     st.caption("Sign-in expires after 8 hours without activity.")
     if st.session_state.get("session_warning"):
         st.info(st.session_state.session_warning)
@@ -1399,6 +1481,7 @@ with st.sidebar:
             forget_tokens()
             st.rerun()
 
+live_meeting_alerts(db, uid, meeting_sidebar_slot)
 save_profile(db, uid)
 try:
     is_super = bool(db.rpc("platform_is_super_admin").execute().data)
@@ -1431,21 +1514,6 @@ if role_options[chosen_label] != kind:
     except Exception as exc:
         st.sidebar.error(f"Could not switch role: {exc}")
 
-try:
-    incoming = db.table("meeting_requests").select("id", count="exact").eq("recipient_id", uid).eq("status", "pending").execute()
-    if incoming.count:
-        st.sidebar.info(f"{incoming.count} incoming meeting request(s) in My meetings")
-    now_utc = datetime.now(timezone.utc)
-    upcoming = db.table("meeting_requests").select("id,proposed_start").eq("status", "accepted").gte(
-        "proposed_start", now_utc.isoformat()
-    ).lte("proposed_start", (now_utc + timedelta(hours=24)).isoformat()).order("proposed_start").execute().data or []
-    if upcoming:
-        st.sidebar.info(f"{len(upcoming)} meeting(s) in the next 24 hours")
-        for row in upcoming[:3]:
-            st.sidebar.caption(display_meeting_time(row["proposed_start"], viewer_timezone()))
-    st.sidebar.caption("For a reminder while the app is closed, add an accepted meeting to your calendar.")
-except Exception:
-    pass
 
 pages = ["Browse projects / posters / abstracts", "Meet participants", "My meetings"]
 if kind == "project_owner" and not is_super:
