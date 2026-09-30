@@ -1241,7 +1241,20 @@ if not uid:
     st.stop()
 
 with st.sidebar:
-    st.write("Signed in")
+    try:
+        profile = db.table("profiles").select("full_name").eq("id", uid).execute().data or []
+        welcome_name = (profile[0].get("full_name") or "").strip() if profile else ""
+        if not welcome_name:
+            account = db.auth.get_user().user
+            welcome_name = account.user_metadata.get("full_name") or account.user_metadata.get("name") or (account.email or "Participant").split("@")[0]
+    except Exception:
+        welcome_name = "Participant"
+    st.markdown("Welcome")
+    st.markdown(
+        '<div style="font-size:1.65rem;font-weight:700;color:#36b583;line-height:1.25;overflow-wrap:anywhere;margin-bottom:1rem">'
+        + escape(str(welcome_name)) + '</div>',
+        unsafe_allow_html=True,
+    )
     st.caption("Sign-in expires after 8 hours without activity.")
     if st.session_state.get("session_warning"):
         st.info(st.session_state.session_warning)
