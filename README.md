@@ -32,6 +32,14 @@ The super admin can create a participant account with a password and add an abst
 
 Participants can switch between Project owner, Investor and Audience at any time from the sidebar. The **Meet participants** page lists registered profiles and allows a direct request without an abstract. Run [direct_meetings_setup.sql](direct_meetings_setup.sql) once in Supabase SQL Editor to permit these direct requests. Existing abstract-linked meetings are preserved.
 
+## Editing existing submissions
+
+All signed-in users can open **My submissions** to edit submissions they own, regardless of the currently selected participant type. The super admin can edit any submission through **Super admin → Edit existing submissions** (or My submissions). The form supports title, category, thematic area, short summary, abstract up to 8,000 characters, keywords, support request and public poster/video links.
+
+The editor verifies the signed-in account on every save and restricts ordinary users to their own owner ID. It uses the existing private server-side Supabase key; no new secret or SQL migration is needed. Only content fields can change. Record ID, author, event, slug, approval status, comments and meeting relationships are preserved. Edits to already approved content appear publicly immediately; the editor does not submit them for another review.
+
+Run `python -m unittest test_submission_editor.py test_bulk_import.py` for local permission and validation checks without changing live data.
+
 ## Bulk Excel import (Super admin)
 
 Open **Super admin → Bulk upload users and abstracts from Excel** and select **Download Excel import template**. The Import sheet uses the same participant/submission fields as the existing forms; Instructions explains each field. Only Participant name (also accepted as Username) and Participant email (also accepted as Email) are required. The email remains the sign-in username.
