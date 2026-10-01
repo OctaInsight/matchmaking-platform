@@ -22,6 +22,7 @@ from supabase import create_client
 from supabase.lib.client_options import SyncClientOptions
 from persistent_sessions import SessionStore
 from bulk_import_ui import bulk_import_panel
+from submission_editor import submission_editor
 
 st.set_page_config(page_title="Matchmaking Platform", page_icon="🤝", layout="wide")
 st.title("Project / Poster / Abstract Matchmaking")
@@ -1219,6 +1220,8 @@ def super_dashboard(db, events):
     st.subheader("Super admin dashboard")
     super_remove_accounts_events(db, events)
     admin_content(db, events)
+    with st.expander("Edit existing submissions"):
+        submission_editor(db, events)
     st.markdown("**Test the Jitsi video call**")
     if "demo_jitsi_room" not in st.session_state:
         st.session_state.demo_jitsi_room = "OctaMatchmakingDemo" + uuid.uuid4().hex
@@ -1517,7 +1520,7 @@ if role_options[chosen_label] != kind:
         st.sidebar.error(f"Could not switch role: {exc}")
 
 
-pages = ["Browse projects / posters / abstracts", "Meet participants", "My meetings"]
+pages = ["Browse projects / posters / abstracts", "My submissions", "Meet participants", "My meetings"]
 if kind == "project_owner" and not is_super:
     pages.insert(1, "Submit project / poster / abstract")
 if is_super:
@@ -1531,6 +1534,8 @@ if page == "Browse projects / posters / abstracts":
     browse(db, uid, events)
 elif page == "Submit project / poster / abstract":
     publish(db, uid, events)
+elif page == "My submissions":
+    submission_editor(db, events)
 elif page == "Meet participants":
     directory(db, uid)
 elif page == "My meetings":
